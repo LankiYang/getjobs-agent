@@ -94,10 +94,13 @@ AGENT_MODEL=deepseek-v4.1-flash-1017
 # 可选
 AGENT_REQUIRE_CONFIRM=1        # 1=启动投递前必须用户确认；0=全自动
 AGENT_MAX_TOKENS=4096
-RUNNER_HEADLESS=1              # 1=无头运行 Chrome，不弹窗口（Boss 风控概率略高）
+RUNNER_HEADLESS=1              # 不建议：上游注明无头易被 Boss 检测；服务器请用 Xvfb + 有头 Chrome
+RUNNER_WRAPPER=deploy/runner/run-runner.sh   # Linux 服务器：Xvfb 虚拟显示包装脚本
 GETJOBS_HOME=vendor/get_jobs   # 默认就是仓库内路径
 RUNNER_PORT_START=19100
 ```
+
+服务器部署（Xvfb + 有头 Chrome、Docker 镜像、验证码处理）见 [docs/deployment.md](docs/deployment.md)。
 
 ### 4. 启动控制面
 

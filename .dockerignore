@@ -1,0 +1,11 @@
+.git/
+.venv/
+runners/
+control-plane/
+mcp/
+skill/
+docs/
+**/__pycache__/
+*.pyc
+control-plane/control.db
+control-plane/jwt.secret

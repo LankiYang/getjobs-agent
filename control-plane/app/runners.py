@@ -166,17 +166,21 @@ def start(user_id: int) -> dict:
     if os.environ.get("RUNNER_HEADLESS", "").strip().lower() in ("1", "true", "yes"):
         env["OB_BROWSER_HEADLESS"] = "1"
 
-    command = [
-        config.java_bin(),
-        f"-Dplaywright.cli.dir={config.PATCHRIGHT_DIR}",
-        "-Dfile.encoding=UTF-8",
-        "-Dsun.stdout.encoding=UTF-8",
-        "-Dsun.stderr.encoding=UTF-8",
-        "-jar",
-        str(config.GETJOBS_JAR),
-        f"--server.port={port}",
-        "--server.address=127.0.0.1",
-    ]
+    wrapper = os.environ.get("RUNNER_WRAPPER", "").strip()
+    if wrapper:
+        command = [wrapper, str(port), str(data_dir), str(config.GETJOBS_JAR)]
+    else:
+        command = [
+            config.java_bin(),
+            f"-Dplaywright.cli.dir={config.PATCHRIGHT_DIR}",
+            "-Dfile.encoding=UTF-8",
+            "-Dsun.stdout.encoding=UTF-8",
+            "-Dsun.stderr.encoding=UTF-8",
+            "-jar",
+            str(config.GETJOBS_JAR),
+            f"--server.port={port}",
+            "--server.address=127.0.0.1",
+        ]
 
     log_path = data_dir / "logs" / "runner.log"
     log_file = open(log_path, "ab")
