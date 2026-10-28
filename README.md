@@ -149,6 +149,17 @@ cd control-plane
 4. 写配置 → 启动投递 → 返回结果；用户可随时问进度或停止
 5. 未登录时返回二维码地址，由用户在聊天界面扫码
 
+## 资料与简历
+
+网页侧栏「资料与简历」可以配置：
+
+- 技能介绍与 AI 打招呼提示词（用于生成开场白）
+- 图片简历上传与预览（≤10MB，png / jpg / gif）
+- 默认打招呼语、AI 开关、投递时自动发送图片简历
+- 黑名单公司增删
+
+agent 工具 `get_ai_greeting_profile` / `update_ai_greeting_profile` / `get_resume_status` 可在对话中读写这些资料；图片简历需要在网页上传。
+
 ## 本地 MCP（可选）
 
 `mcp/` 是给 Claude Code 单 runner 调试用的工具层，`skill/getjobs/` 是配套编排规则；服务端 agent 不依赖它们。
