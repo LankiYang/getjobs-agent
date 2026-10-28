@@ -453,6 +453,7 @@
     <div class="stamp" aria-hidden="true">投</div>
     <h1 class="brand-title">投递台账</h1>
     <span id="who" class="who"></span>
+    <button id="newChatBtn" class="linkish">新对话</button>
     <button id="logoutBtn" class="linkish">退出</button>
   </header>
 
@@ -593,7 +594,8 @@
 const state = {
   token: localStorage.getItem('getjobs_token') || '',
   user: null,
-  sessionId: localStorage.getItem('getjobs_session') || '',
+  sessionId: '',
+  sessionKey: '',
   busy: false,
   runnerRunning: false,
 };
@@ -623,9 +625,16 @@ async function api(path, options = {}) {
 }
 
 function logout() {
-  state.token = ''; state.user = null;
+  if (state.sessionKey) localStorage.removeItem(state.sessionKey);
+  localStorage.removeItem('getjobs_session');
+  state.token = ''; state.user = null; state.sessionId = ''; state.sessionKey = '';
   localStorage.removeItem('getjobs_token');
   show('app', false); show('auth', true);
+}
+
+function saveSession(id) {
+  state.sessionId = id;
+  if (state.sessionKey) localStorage.setItem(state.sessionKey, id);
 }
 
 function addMessage(role, text, tools) {
@@ -663,11 +672,41 @@ async function loadMe() {
   const data = await api('/api/me');
   state.user = data.user;
   $('who').textContent = data.user.email;
+  state.sessionKey = 'getjobs_session_' + data.user.id;
+  state.sessionId = localStorage.getItem(state.sessionKey) || '';
+  if (!state.sessionId) {
+    const legacy = localStorage.getItem('getjobs_session');
+    if (legacy) {
+      saveSession(legacy);
+      localStorage.removeItem('getjobs_session');
+    }
+  }
   await loadRunner();
   await Promise.all([
     loadChannels(),
     state.runnerRunning ? loadStats() : Promise.resolve(),
   ]);
+  await loadHistory();
+}
+
+async function loadHistory() {
+  if (!state.sessionId) return;
+  try {
+    const data = await api('/api/agent/history?session_id=' + encodeURIComponent(state.sessionId));
+    const items = data.messages || [];
+    if (!items.length) return;
+    $('empty')?.remove();
+    items.forEach(item => {
+      if (item.role === 'user') {
+        addMessage('user', item.content || '');
+      } else if (item.role === 'assistant') {
+        const el = addMessage('agent', '');
+        renderMarkdown(el.querySelector('.body'), item.content || '');
+      }
+    });
+    const chat = $('chat');
+    chat.scrollTop = chat.scrollHeight;
+  } catch (e) { /* ignore */ }
 }
 
 function setRunnerState(running, port) {
@@ -846,8 +885,7 @@ async function sendMessage() {
       let ev;
       try { ev = JSON.parse(payload); } catch { return; }
       if (ev.type === 'session') {
-        state.sessionId = ev.sessionId;
-        localStorage.setItem('getjobs_session', ev.sessionId);
+        saveSession(ev.sessionId);
       } else if (ev.type === 'text') {
         full += ev.text || '';
         scheduleRender();
@@ -860,8 +898,7 @@ async function sendMessage() {
       } else if (ev.type === 'done') {
         full = ev.reply || full;
         render();
-        state.sessionId = ev.sessionId;
-        localStorage.setItem('getjobs_session', ev.sessionId);
+        saveSession(ev.sessionId);
         finished = true;
       } else if (ev.type === 'error') {
         throw new Error(ev.message || '模型返回错误');
@@ -1085,6 +1122,11 @@ function bind() {
   $('registerBtn').onclick = () => submitAuth('/api/auth/register');
   $('password').addEventListener('keydown', e => { if (e.key === 'Enter') submitAuth('/api/auth/login'); });
   $('logoutBtn').onclick = logout;
+  $('newChatBtn').onclick = () => {
+    if (state.sessionKey) localStorage.removeItem(state.sessionKey);
+    state.sessionId = '';
+    location.reload();
+  };
   $('startRunner').onclick = startRunner;
   $('stopRunner').onclick = stopRunner;
   $('loginBoss').onclick = openQr;
