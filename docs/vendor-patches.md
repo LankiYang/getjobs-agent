@@ -25,6 +25,22 @@ ALLOWED_PREFIXES = [
 
 上游把作者本机的 Clash 代理（`127.0.0.1:7897`）写进了 `systemProp`，没有该代理的机器无法解析任何依赖。快照中已注释，构建直连。
 
+## 3. PlaywrightManager：支持无头模式
+
+文件：`src/main/java/com/getjobs/worker/manager/PlaywrightManager.java`
+
+上游固定 `.setHeadless(false)`（有头 Chrome 会弹窗占用桌面）。增加环境变量开关：
+
+```java
+private static final boolean HEADLESS = isTruthy(System.getenv("OB_BROWSER_HEADLESS"));
+...
+.setHeadless(HEADLESS)
+```
+
+控制面通过 `RUNNER_HEADLESS=1` 向 runner 注入 `OB_BROWSER_HEADLESS=1`，浏览器在后台运行，不出现可见窗口；登录二维码仍可通过 `/api/offerbuddy/qr` 截图拿到，在网页/聊天里展示。
+
+> 注意：Boss 有概率对无头浏览器做风险控制（验证码/限制）；上游默认有头也是这个原因。遇到风控时可临时切回有头模式排查。
+
 ## 未修改但依赖的上游行为
 
 - `OB_WORKER_SECRET` 存在时：不自动打开管理页、不监听 6866、启动时不初始化 Playwright（浏览器按需拉起，利于多实例省内存）

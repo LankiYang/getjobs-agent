@@ -94,6 +94,7 @@ AGENT_MODEL=deepseek-v4.1-flash-1017
 # 可选
 AGENT_REQUIRE_CONFIRM=1        # 1=启动投递前必须用户确认；0=全自动
 AGENT_MAX_TOKENS=4096
+RUNNER_HEADLESS=1              # 1=无头运行 Chrome，不弹窗口（Boss 风控概率略高）
 GETJOBS_HOME=vendor/get_jobs   # 默认就是仓库内路径
 RUNNER_PORT_START=19100
 ```

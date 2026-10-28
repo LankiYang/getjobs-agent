@@ -163,6 +163,8 @@ def start(user_id: int) -> dict:
     node = config.node_bin()
     if node:
         env["PLAYWRIGHT_NODEJS_PATH"] = node
+    if os.environ.get("RUNNER_HEADLESS", "").strip().lower() in ("1", "true", "yes"):
+        env["OB_BROWSER_HEADLESS"] = "1"
 
     command = [
         config.java_bin(),

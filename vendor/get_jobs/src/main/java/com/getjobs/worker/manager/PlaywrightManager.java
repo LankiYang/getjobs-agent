@@ -99,6 +99,13 @@ public class PlaywrightManager {
     // Playwright调试端口
     private static final int CDP_PORT = 7866;
 
+    /** 无头模式：设置 OB_BROWSER_HEADLESS=1 时不弹出可见窗口。 */
+    private static final boolean HEADLESS = isTruthy(System.getenv("OB_BROWSER_HEADLESS"));
+
+    private static boolean isTruthy(String value) {
+        return value != null && (value.equals("1") || value.equalsIgnoreCase("true") || value.equalsIgnoreCase("yes"));
+    }
+
     // 登录状态探针的超时（毫秒）。探针失败只代表"没看到"，绝不能拖住主流程
     private static final double LOCATOR_PROBE_TIMEOUT = 5000;
 
@@ -306,7 +313,7 @@ public class PlaywrightManager {
             context = playwright.chromium().launchPersistentContext(USER_DATA_DIR,
                     new BrowserType.LaunchPersistentContextOptions()
                             .setChannel("chrome")   // 用本机真实 Chrome，而不是 Chromium
-                            .setHeadless(false)     // 无头必被检测
+                            .setHeadless(HEADLESS)  // 默认有头；OB_BROWSER_HEADLESS=1 时无头
                             .setSlowMo(50)          // 放慢操作速度，便于调试
                             .setViewportSize(null)  // 不锁视口，用窗口实际大小
                             .setChromiumSandbox(true) // 不加 --no-sandbox：它本身就是自动化特征
