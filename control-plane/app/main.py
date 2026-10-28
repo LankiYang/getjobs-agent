@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import agent, runners
+from . import agent, resume, runners
 from .channels import CHANNELS
 from .config import ALLOWED_ORIGINS
 from .db import get_conn, init_db
@@ -210,16 +210,30 @@ async def upload_resume_image(
         raise HTTPException(400, "当前仅 Boss 支持图片简历")
     content = await file.read()
     if len(content) > 10 * 1024 * 1024:
-        raise HTTPException(413, "图片大小不能超过 10MB")
+        raise HTTPException(413, "文件大小不能超过 10MB")
+
+    filename = file.filename or "resume"
+    content_type = file.content_type or "application/octet-stream"
+    is_pdf = content_type == "application/pdf" or filename.lower().endswith(".pdf")
+    if is_pdf:
+        try:
+            content = resume.pdf_to_png(content)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        filename = "resume.png"
+        content_type = "image/png"
+    elif not content_type.startswith("image/"):
+        raise HTTPException(400, "请上传 PDF 或图片文件（png / jpg / gif）")
+
     response = runners.request(
         user_id,
         "POST",
         "/api/boss/config/resume-image",
         files={
             "file": (
-                file.filename or "resume.png",
+                filename,
                 content,
-                file.content_type or "application/octet-stream",
+                content_type,
             )
         },
     )
