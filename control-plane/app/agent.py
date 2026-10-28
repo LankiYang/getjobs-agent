@@ -10,9 +10,20 @@ from . import runners
 from .channels import CHANNELS
 from .db import get_conn
 
-BASE_URL = os.environ.get("AGENT_BASE_URL", "").rstrip("/")
+PROVIDER = os.environ.get("AGENT_PROVIDER", "openai").strip().lower()
+OPENAI_BASE_URL = os.environ.get("AGENT_BASE_URL", "").rstrip("/")
 API_KEY = os.environ.get("AGENT_API_KEY", "")
-MODEL = os.environ.get("AGENT_MODEL", "")
+ANTHROPIC_BASE_URL = (
+    os.environ.get("AGENT_ANTHROPIC_BASE_URL")
+    or os.environ.get("ANTHROPIC_BASE_URL")
+    or "http://127.0.0.1:15721"
+).rstrip("/")
+ANTHROPIC_TOKEN = os.environ.get("AGENT_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN") or ""
+DEFAULT_ANTHROPIC_MODEL = "deepseek-v4.1-flash-1017"
+MODEL = os.environ.get("AGENT_MODEL", "").strip() or (
+    DEFAULT_ANTHROPIC_MODEL if PROVIDER == "anthropic" else ""
+)
+MAX_TOKENS = int(os.environ.get("AGENT_MAX_TOKENS", "4096"))
 MAX_STEPS = int(os.environ.get("AGENT_MAX_STEPS", "8"))
 HISTORY_LIMIT = int(os.environ.get("AGENT_HISTORY_LIMIT", "20"))
 REQUIRE_CONFIRM = os.environ.get("AGENT_REQUIRE_CONFIRM", "1") != "0"
@@ -52,7 +63,9 @@ class AgentNotConfigured(RuntimeError):
 
 
 def configured() -> bool:
-    return bool(BASE_URL and MODEL)
+    if PROVIDER == "anthropic":
+        return bool(ANTHROPIC_BASE_URL and MODEL)
+    return bool(OPENAI_BASE_URL and MODEL)
 
 
 SYSTEM_PROMPT = f"""你是一个求职投递助手，为当前登录用户服务。你可以通过工具操作他名下完全隔离的自动化投递环境。
@@ -428,10 +441,10 @@ def history(user_id: int, session_id: str) -> list[dict]:
 def _chat_completion(messages: list[dict]) -> dict:
     if not configured():
         raise AgentNotConfigured(
-            "未配置 AGENT_BASE_URL / AGENT_API_KEY / AGENT_MODEL，无法调用对话模型"
+            "未配置 AGENT_BASE_URL / AGENT_MODEL，无法调用对话模型"
         )
     response = httpx.post(
-        f"{BASE_URL}/chat/completions",
+        f"{OPENAI_BASE_URL}/chat/completions",
         headers={"Authorization": f"Bearer {API_KEY}"},
         json={
             "model": MODEL,
@@ -446,16 +459,129 @@ def _chat_completion(messages: list[dict]) -> dict:
     return response.json()
 
 
+def _anthropic_tools() -> list[dict]:
+    return [
+        {
+            "name": tool["function"]["name"],
+            "description": tool["function"]["description"],
+            "input_schema": tool["function"]["parameters"],
+        }
+        for tool in TOOLS
+    ]
+
+
+def _anthropic_completion(system: str, messages: list[dict]) -> dict:
+    headers = {"content-type": "application/json", "anthropic-version": "2023-06-01"}
+    if ANTHROPIC_TOKEN and ANTHROPIC_TOKEN != "PROXY_MANAGED":
+        headers["authorization"] = f"Bearer {ANTHROPIC_TOKEN}"
+    response = httpx.post(
+        f"{ANTHROPIC_BASE_URL}/v1/messages",
+        headers=headers,
+        json={
+            "model": MODEL,
+            "max_tokens": MAX_TOKENS,
+            "system": system,
+            "messages": messages,
+            "tools": _anthropic_tools(),
+            "tool_choice": {"type": "auto"},
+        },
+        timeout=180,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def _anthropic_history(user_id: int, session_id: str) -> list[dict]:
+    merged: list[dict] = []
+    for item in _load_history(user_id, session_id):
+        role = item["role"]
+        content = item["content"] or ""
+        if merged and merged[-1]["role"] == role:
+            merged[-1]["content"] += "\n" + content
+        else:
+            merged.append({"role": role, "content": content})
+    if merged and merged[0]["role"] != "user":
+        merged.insert(0, {"role": "user", "content": "（继续之前的对话）"})
+    return merged
+
+
+def _run_anthropic(user_id: int, session_id: str) -> dict:
+    messages = _anthropic_history(user_id, session_id)
+    tool_events: list[dict] = []
+    qr_urls: list[str] = []
+
+    for _ in range(MAX_STEPS):
+        payload = _anthropic_completion(SYSTEM_PROMPT, messages)
+        blocks = payload.get("content") or []
+        text_parts = [block.get("text", "") for block in blocks if block.get("type") == "text"]
+        tool_uses = [block for block in blocks if block.get("type") == "tool_use"]
+
+        if not tool_uses:
+            reply = "\n".join(text_parts).strip()
+            _save_message(user_id, session_id, "assistant", reply)
+            return {
+                "sessionId": session_id,
+                "reply": reply,
+                "toolCalls": tool_events,
+                "qrUrls": qr_urls,
+            }
+
+        assistant_blocks = [
+            block for block in blocks if block.get("type") in ("text", "tool_use")
+        ]
+        messages.append({"role": "assistant", "content": assistant_blocks})
+
+        result_blocks = []
+        for block in tool_uses:
+            name = block.get("name", "")
+            args = block.get("input") or {}
+            if not isinstance(args, dict):
+                args = {}
+            try:
+                result = execute_tool(user_id, name, args)
+            except AgentToolError as exc:
+                result = {"error": str(exc)}
+            except runners.RunnerError as exc:
+                result = {"error": exc.message}
+            except httpx.HTTPError as exc:
+                result = {"error": f"后端请求失败: {exc}"}
+
+            if isinstance(result, dict) and result.get("qrUrl"):
+                qr_urls.append(result["qrUrl"])
+            tool_events.append({"name": name, "arguments": args, "result": result})
+            result_blocks.append(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": block.get("id", ""),
+                    "content": json.dumps(result, ensure_ascii=False),
+                }
+            )
+        messages.append({"role": "user", "content": result_blocks})
+
+    fallback = "这轮操作步骤过多，已先暂停。请把条件再明确一下，或者告诉我下一步只做哪件事。"
+    _save_message(user_id, session_id, "assistant", fallback)
+    return {
+        "sessionId": session_id,
+        "reply": fallback,
+        "toolCalls": tool_events,
+        "qrUrls": qr_urls,
+    }
+
+
 def run_chat(user_id: int, session_id: str | None, message: str) -> dict:
     if not configured():
         raise AgentNotConfigured(
-            "未配置 AGENT_BASE_URL / AGENT_API_KEY / AGENT_MODEL，无法调用对话模型"
+            "未配置对话模型：OpenAI 兼容请设置 AGENT_BASE_URL/AGENT_MODEL；"
+            "Anthropic 兼容请设置 AGENT_PROVIDER=anthropic 和 AGENT_ANTHROPIC_BASE_URL"
         )
     if not message.strip():
         raise ValueError("消息不能为空")
 
     session_id = session_id or uuid.uuid4().hex
     _save_message(user_id, session_id, "user", message)
+
+    if PROVIDER == "anthropic":
+        return _run_anthropic(user_id, session_id)
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     messages.extend(_load_history(user_id, session_id))

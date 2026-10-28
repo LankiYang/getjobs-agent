@@ -317,5 +317,6 @@ def agent_history(session_id: str, user_id: int = Depends(current_user)) -> dict
 def agent_health(user_id: int = Depends(current_user)) -> dict:
     return {
         "configured": agent.configured(),
+        "provider": agent.PROVIDER,
         "model": agent.MODEL if agent.configured() else None,
     }

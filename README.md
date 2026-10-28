@@ -77,12 +77,23 @@ python -m venv .venv
 ```bash
 # 必须
 JAVA_HOME=/path/to/jdk21
-# 对话模型（OpenAI 兼容；BASE_URL 要带 /v1）
+
+# 对话模型：二选一
+# A. OpenAI 兼容（BASE_URL 要带 /v1）
+AGENT_PROVIDER=openai
 AGENT_BASE_URL=https://api.openai.com/v1
 AGENT_API_KEY=sk-xxx
 AGENT_MODEL=gpt-4o-mini
+
+# B. Anthropic 兼容（如本机 CC Switch 代理 / 内部网关）
+AGENT_PROVIDER=anthropic
+AGENT_ANTHROPIC_BASE_URL=http://127.0.0.1:15721
+AGENT_MODEL=deepseek-v4.1-flash-1017
+# AGENT_API_KEY=...        # 代理自带鉴权时留空；不是 PROXY_MANAGED 时会作为 Bearer 发送
+
 # 可选
 AGENT_REQUIRE_CONFIRM=1        # 1=启动投递前必须用户确认；0=全自动
+AGENT_MAX_TOKENS=4096
 GETJOBS_HOME=vendor/get_jobs   # 默认就是仓库内路径
 RUNNER_PORT_START=19100
 ```
