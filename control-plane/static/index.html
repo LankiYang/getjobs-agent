@@ -396,6 +396,17 @@
   .blacklist .tag button:hover { color: var(--seal); }
   .blacklist-add { display: flex; gap: 8px; }
   .blacklist-add .text-input { flex: 1; }
+
+  .takeover-modal { padding: 12px; }
+  .takeover-card {
+    width: min(1400px, 100%); height: 92vh; background: #16191c;
+    border: 1px solid #3a4046; display: flex; flex-direction: column;
+  }
+  .takeover-head {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 12px; color: #e8e8e2; font-size: 13px; background: #1e2226;
+  }
+  .takeover-card iframe { flex: 1; width: 100%; border: none; background: #000; }
   .modal-card .hint { font-size: 12.5px; color: var(--muted); margin: 0 0 18px; }
   .qr-frame {
     background: #fff; border: 1px solid var(--line);
@@ -593,6 +604,9 @@
         <div class="side-actions">
           <button id="profileBtn" class="btn ghost tiny">资料与简历</button>
         </div>
+        <div class="side-actions">
+          <button id="takeoverBtn" class="btn ghost tiny">接管浏览器</button>
+        </div>
       </div>
 
       <div class="side-block ledger-block">
@@ -752,6 +766,17 @@
   </div>
 </div>
 
+<!-- 浏览器接管 -->
+<div id="takeoverModal" class="modal takeover-modal hidden">
+  <div class="takeover-card">
+    <div class="takeover-head">
+      <span>接管浏览器 · 实时操作（用于人机验证 / 短信验证码）</span>
+      <button id="closeTakeover" class="btn tiny" type="button">关闭</button>
+    </div>
+    <iframe id="takeoverFrame" title="浏览器接管"></iframe>
+  </div>
+</div>
+
 <!-- 二维码 -->
 <div id="qrModal" class="modal hidden">
   <div class="modal-card">
@@ -762,6 +787,7 @@
     </div>
     <div class="modal-actions">
       <button id="refreshQr" class="btn ghost tiny">刷新</button>
+      <button id="qrTakeover" class="btn ghost tiny">人机验证 / 短信？接管浏览器</button>
       <button id="closeQr" class="btn tiny">关闭</button>
     </div>
     <div id="qrError" class="error" role="alert"></div>
@@ -1368,6 +1394,21 @@ async function sendMessage() {
   }
 }
 
+async function openTakeover() {
+  try {
+    const data = await api('/api/browser/takeover', { method: 'POST' });
+    $('takeoverFrame').src = data.viewPath;
+    show('takeoverModal', true);
+  } catch (e) {
+    addMessage('system', '打开浏览器接管失败：' + e.message);
+  }
+}
+
+function closeTakeover() {
+  show('takeoverModal', false);
+  $('takeoverFrame').src = 'about:blank';
+}
+
 async function openQr() {
   try {
     const data = await api('/api/channels/boss/login', { method: 'POST' });
@@ -1599,6 +1640,9 @@ function bind() {
   $('startRunner').onclick = startRunner;
   $('stopRunner').onclick = stopRunner;
   $('loginBoss').onclick = openQr;
+  $('takeoverBtn').onclick = openTakeover;
+  $('qrTakeover').onclick = openTakeover;
+  $('closeTakeover').onclick = closeTakeover;
   $('profileBtn').onclick = openProfile;
   $('closeProfile').onclick = () => show('profileModal', false);
   $('saveAi').onclick = saveAiProfile;

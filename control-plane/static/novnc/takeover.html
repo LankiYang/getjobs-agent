@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>接管浏览器</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #16191c; color: #e8e8e2; font-family: system-ui, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  body { display: flex; flex-direction: column; }
+  .bar {
+    display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+    background: #1e2226; border-bottom: 1px solid #31363b; flex-wrap: wrap;
+  }
+  .bar .status { font-size: 12px; color: #9aa0a6; margin-right: auto; }
+  .bar input {
+    background: #14171a; border: 1px solid #3a4046; color: #e8e8e2;
+    padding: 7px 9px; font-size: 13px; border-radius: 2px; width: 180px;
+  }
+  .bar input:focus { outline: none; border-color: #b23a2e; }
+  .bar button {
+    background: #b23a2e; border: 1px solid #b23a2e; color: #fff;
+    padding: 7px 12px; font-size: 13px; border-radius: 2px; cursor: pointer;
+  }
+  .bar button.ghost { background: transparent; color: #c9c9c2; border-color: #3a4046; }
+  .bar button:hover { opacity: .9; }
+  #screen { flex: 1; min-height: 0; background: #000; overflow: hidden; }
+  #screen canvas { display: block; }
+  .overlay {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: rgba(10,12,14,.72); color: #d9d9d2; font-size: 14px; z-index: 10;
+  }
+  .overlay.hidden { display: none; }
+</style>
+</head>
+<body>
+  <div class="bar">
+    <span id="status" class="status">连接中…</span>
+    <input id="text" placeholder="输入短信验证码 / 文本" autocomplete="off" />
+    <button id="typeBtn">输入</button>
+    <button id="enterBtn" class="ghost">回车</button>
+    <button id="selectAllBtn" class="ghost">全选</button>
+    <button id="pasteBtn" class="ghost">粘贴</button>
+    <button id="reconnectBtn" class="ghost">重连</button>
+  </div>
+  <div id="screen"></div>
+  <div id="overlay" class="overlay">正在连接你的浏览器…</div>
+  <script type="module">
+    import RFB from '/assets/novnc/core/rfb.js';
+
+    const params = new URLSearchParams(location.search);
+    const ticket = params.get('ticket') || '';
+    const statusEl = document.getElementById('status');
+    const overlay = document.getElementById('overlay');
+    const screen = document.getElementById('screen');
+    let rfb = null;
+
+    function setStatus(text) { statusEl.textContent = text; }
+
+    function connect() {
+      overlay.classList.remove('hidden');
+      setStatus('连接中…');
+      const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+      const url = `${scheme}://${location.host}/api/browser/takeover/ws?ticket=${encodeURIComponent(ticket)}`;
+      try { if (rfb) rfb.disconnect(); } catch (e) {}
+      rfb = new RFB(screen, url, { wsProtocols: ['binary'], clipViewport: false, scaleViewport: true, resizeSession: false });
+      window.__rfb = rfb;
+      rfb.addEventListener('connect', () => {
+        overlay.classList.add('hidden');
+        setStatus('已连接 · 可以直接操作浏览器');
+      });
+      rfb.addEventListener('disconnect', (e) => {
+        overlay.classList.remove('hidden');
+        overlay.textContent = e.detail.clean ? '连接已关闭' : '连接断开，点「重连」';
+        setStatus('已断开');
+      });
+      rfb.addEventListener('credentialsrequired', () => {
+        setStatus('需要 VNC 密码');
+      });
+      rfb.focus();
+    }
+
+    function sendChar(ch) {
+      if (!rfb) return;
+      const code = ch.charCodeAt(0);
+      if (code > 0x7e) return;
+      rfb.sendKey(code, null, true);
+      rfb.sendKey(code, null, false);
+    }
+
+    async function typeText(text) {
+      if (!rfb || !text) return;
+      rfb.focus();
+      for (const ch of text) {
+        sendChar(ch);
+        await new Promise((resolve) => setTimeout(resolve, 35));
+      }
+    }
+
+    function pressEnter() {
+      if (!rfb) return;
+      rfb.focus();
+      rfb.sendKey(0xFF0D, 'Enter', true);
+      rfb.sendKey(0xFF0D, 'Enter', false);
+    }
+
+    document.getElementById('typeBtn').onclick = () => {
+      const input = document.getElementById('text');
+      typeText(input.value.trim());
+      input.value = '';
+    };
+    document.getElementById('enterBtn').onclick = pressEnter;
+    document.getElementById('selectAllBtn').onclick = () => {
+      if (!rfb) return;
+      rfb.focus();
+      rfb.sendKey(0xFFE3, 'ControlLeft', true);
+      rfb.sendKey(0x0061, 'KeyA', true);
+      rfb.sendKey(0x0061, 'KeyA', false);
+      rfb.sendKey(0xFFE3, 'ControlLeft', false);
+    };
+    document.getElementById('pasteBtn').onclick = async () => {
+      const input = document.getElementById('text');
+      const text = input.value.trim();
+      if (!rfb || !text) return;
+      rfb.clipboardPasteFrom(text);
+      rfb.focus();
+      rfb.sendKey(0xFFE3, 'ControlLeft', true);
+      rfb.sendKey(0x0076, 'KeyV', true);
+      rfb.sendKey(0x0076, 'KeyV', false);
+      rfb.sendKey(0xFFE3, 'ControlLeft', false);
+      input.value = '';
+    };
+    document.getElementById('reconnectBtn').onclick = connect;
+    document.getElementById('text').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); typeText(e.target.value.trim()); e.target.value = ''; }
+    });
+
+    connect();
+  </script>
+</body>
+</html>

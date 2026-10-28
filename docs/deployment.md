@@ -45,7 +45,8 @@ docker run -d --name runner-u1 -p 127.0.0.1:19100:19100 \
 ## 登录与验证码
 
 - 二维码：`GET /api/channels/boss/login/qr` 返回 PNG，在网页/聊天里展示，用户扫码即可
-- 需要人工过滑块/验证码时：容器内已装 `x11vnc`，可通过受限内网或 VPN 临时连接虚拟屏幕操作
+- 人机验证 / 短信验证码：网页「接管浏览器」通过 noVNC 实时操作 runner 的 Chrome（控制面自动启动 x11vnc，仅监听 127.0.0.1，使用短期签名 ticket 鉴权）
+- 需要 x11vnc：`apt install x11vnc`（Docker 镜像已内置）；生产环境建议补 VNC 密码与频率限制
 
 ## 安全
 

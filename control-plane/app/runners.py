@@ -15,6 +15,7 @@ from . import config
 from .db import get_conn
 
 WINDOWS = os.name == "nt"
+VNC_PORT_START = int(os.environ.get("RUNNER_VNC_PORT_START", "5900"))
 
 
 class RunnerError(RuntimeError):
@@ -268,6 +269,67 @@ def status(user_id: int) -> dict:
         "dataDir": row["data_dir"],
         "pid": row["pid"],
     }
+
+
+def display_number(row) -> int:
+    return 100 + row["port"] % 1000
+
+
+def vnc_port(row) -> int:
+    return VNC_PORT_START + (row["port"] - config.PORT_START)
+
+
+def vnc_port_for_user(user_id: int) -> int | None:
+    row = _row(user_id)
+    return vnc_port(row) if row else None
+
+
+def _port_listening(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.5)
+        return sock.connect_ex(("127.0.0.1", port)) == 0
+
+
+def ensure_vnc(user_id: int) -> int:
+    row = _row(user_id)
+    if not row or not healthy(row):
+        raise RunnerError("runner 未运行，请先启动", status_code=409)
+    port = vnc_port(row)
+    if _port_listening(port):
+        return port
+    if WINDOWS:
+        raise RunnerError("本机不支持 VNC 接管（仅服务器 Xvfb 环境可用）", status_code=503)
+
+    data_dir = Path(row["data_dir"])
+    log_path = data_dir / "logs" / "x11vnc.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_file = open(log_path, "ab")
+    command = [
+        "x11vnc",
+        "-display", f":{display_number(row)}",
+        "-rfbport", str(port),
+        "-localhost",
+        "-nopw",
+        "-forever",
+        "-shared",
+        "-quiet",
+    ]
+    try:
+        subprocess.Popen(
+            command,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    except FileNotFoundError as exc:
+        raise RunnerError("服务器未安装 x11vnc", status_code=503) from exc
+
+    deadline = time.time() + 8
+    while time.time() < deadline:
+        if _port_listening(port):
+            return port
+        time.sleep(0.2)
+    raise RunnerError("x11vnc 启动失败", status_code=502, detail=_log_tail(log_path, 20))
 
 
 def request(user_id: int, method: str, path: str, *, params=None, json=None, files=None, timeout: float = 60, stream: bool = False):

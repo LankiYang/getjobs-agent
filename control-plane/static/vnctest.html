@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>VNC input test</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #f2f3ee; font-family: system-ui, sans-serif; transition: background .2s; }
+  body { display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 16px; }
+  h1 { font-size: 28px; margin: 0; }
+  input { width: 420px; font-size: 32px; padding: 12px 16px; text-align: center; letter-spacing: 8px; }
+  p { color: #666; margin: 0; }
+  body.ok { background: #2f7d4f; color: #fff; }
+  body.ok p { color: #d9f2e2; }
+</style>
+</head>
+<body>
+  <h1 id="title">VNC 输入测试</h1>
+  <input id="code" autofocus autocomplete="off" placeholder="输入 123456" />
+  <p>在输入框输入 123456，页面会变绿</p>
+  <script>
+    const input = document.getElementById('code');
+    input.addEventListener('input', () => {
+      const ok = input.value.includes('123456');
+      document.body.classList.toggle('ok', ok);
+      document.getElementById('title').textContent = ok ? '输入成功' : 'VNC 输入测试';
+    });
+    setTimeout(() => input.focus(), 300);
+  </script>
+</body>
+</html>

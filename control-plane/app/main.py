@@ -1,10 +1,22 @@
 """getjobs control plane: auth + per-user isolated runners + channel proxy."""
 
+import asyncio
 import json
 from pathlib import Path
 
 import httpx
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, Response, UploadFile
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    Header,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -14,7 +26,14 @@ from . import agent, resume, runners
 from .channels import CHANNELS
 from .config import ALLOWED_ORIGINS
 from .db import get_conn, init_db
-from .security import create_token, decode_token, hash_password, verify_password
+from .security import (
+    create_ticket,
+    create_token,
+    decode_ticket,
+    decode_token,
+    hash_password,
+    verify_password,
+)
 
 app = FastAPI(title="getjobs control plane", version="0.1.0")
 app.add_middleware(
@@ -179,6 +198,73 @@ def channels_status(user_id: int = Depends(current_user)) -> dict:
                 entry["state"] = "unknown"
         items.append(entry)
     return {"runnerRunning": running, "channels": items}
+
+
+@app.post("/api/browser/takeover")
+def browser_takeover(user_id: int = Depends(current_user)) -> dict:
+    runners.ensure_vnc(user_id)
+    ticket = create_ticket(user_id, "vnc", 120)
+    return {
+        "ticket": ticket,
+        "viewPath": f"/assets/novnc/takeover.html?ticket={ticket}",
+        "wsPath": f"/api/browser/takeover/ws?ticket={ticket}",
+        "expiresIn": 120,
+    }
+
+
+@app.websocket("/api/browser/takeover/ws")
+async def browser_takeover_ws(websocket: WebSocket):
+    ticket = websocket.query_params.get("ticket", "")
+    user_id = decode_ticket(ticket, "vnc")
+    if user_id is None:
+        await websocket.close(code=4401)
+        return
+    port = runners.vnc_port_for_user(user_id)
+    if port is None:
+        await websocket.close(code=4404)
+        return
+
+    try:
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    except OSError:
+        await websocket.close(code=1011)
+        return
+
+    await websocket.accept(subprotocol="binary")
+
+    async def ws_to_tcp():
+        try:
+            while True:
+                data = await websocket.receive_bytes()
+                writer.write(data)
+                await writer.drain()
+        except Exception:
+            pass
+        finally:
+            try:
+                writer.close()
+            except Exception:
+                pass
+
+    async def tcp_to_ws():
+        try:
+            while True:
+                data = await reader.read(65536)
+                if not data:
+                    break
+                await websocket.send_bytes(data)
+        except Exception:
+            pass
+        finally:
+            try:
+                await websocket.close()
+            except Exception:
+                pass
+
+    tasks = [asyncio.create_task(ws_to_tcp()), asyncio.create_task(tcp_to_ws())]
+    _, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    for task in pending:
+        task.cancel()
 
 
 def _channel(channel: str):

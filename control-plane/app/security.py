@@ -43,3 +43,19 @@ def decode_token(token: str) -> int | None:
         return int(payload["sub"])
     except Exception:
         return None
+
+
+def create_ticket(user_id: int, scope: str, ttl: int = 120) -> str:
+    now = int(time.time())
+    payload = {"sub": str(user_id), "scope": scope, "iat": now, "exp": now + ttl}
+    return jwt.encode(payload, jwt_secret(), algorithm="HS256")
+
+
+def decode_ticket(token: str, scope: str) -> int | None:
+    try:
+        payload = jwt.decode(token, jwt_secret(), algorithms=["HS256"])
+        if payload.get("scope") != scope:
+            return None
+        return int(payload["sub"])
+    except Exception:
+        return None
