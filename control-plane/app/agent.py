@@ -81,6 +81,7 @@ SYSTEM_PROMPT = f"""你是一个求职投递助手，为当前登录用户服务
 6. 启动后告诉用户可以随时问进度；用户说停止时调用 stop_application。
 7. 如果 status 显示未登录，调用 open_login 并把返回的二维码地址告诉用户，让他扫码；不要尝试代填验证码。
 8. 不要编造投递结果，不要承诺拿到面试；提醒平台风控和每日次数限制。
+9. 用户想优化 AI 生成的开场白时，用 get_ai_greeting_profile 读取他的技能介绍和提示词，再按他的真实经历更新；图片简历需要用户自己在网页「资料与简历」里上传，可用 get_resume_status 检查是否已就绪。
 
 工具参数里的 channel 只能是 boss 或 liepin。修改配置只传需要变化的字段。所有操作都只作用于当前用户自己的环境和账号。"""
 
@@ -113,6 +114,36 @@ TOOLS = [
                 },
                 "required": ["patch"],
             },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_ai_greeting_profile",
+            "description": "读取用于 AI 生成打招呼语的技能介绍（introduce）和提示词（prompt）",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_ai_greeting_profile",
+            "description": "合并更新 AI 打招呼资料：技能介绍 introduce、提示词 prompt",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "introduce": {"type": "string", "description": "技能与经历介绍"},
+                    "prompt": {"type": "string", "description": "生成打招呼语的提示词"},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_resume_status",
+            "description": "查看图片简历是否已上传（文件名、大小、更新时间）",
+            "parameters": {"type": "object", "properties": {}},
         },
     },
     {
@@ -327,6 +358,35 @@ def execute_tool(user_id: int, name: str, args: dict):
         profile.update(patch)
         _save_profile(user_id, profile)
         return {"profile": profile}
+
+    if name == "get_ai_greeting_profile":
+        data = _request_json(user_id, "GET", "/api/ai/config")
+        payload = data.get("data") or {}
+        return {
+            "introduce": payload.get("introduce") or "",
+            "prompt": payload.get("prompt") or "",
+        }
+
+    if name == "update_ai_greeting_profile":
+        data = _request_json(user_id, "GET", "/api/ai/config")
+        current = data.get("data") or {}
+        introduce = args.get("introduce", current.get("introduce") or "")
+        prompt = args.get("prompt", current.get("prompt") or "")
+        _request_json(
+            user_id,
+            "POST",
+            "/api/ai/config",
+            json={"introduce": introduce, "prompt": prompt},
+        )
+        return {
+            "ok": True,
+            "introduce": (introduce or "")[:120],
+            "prompt": (prompt or "")[:120],
+        }
+
+    if name == "get_resume_status":
+        data = _request_json(user_id, "GET", "/api/boss/config")
+        return {"resumeImage": data.get("resumeImage") or {"exists": False}}
 
     if name == "get_channel_config":
         entry = _channel(args["channel"])

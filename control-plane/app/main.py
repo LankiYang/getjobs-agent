@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 import httpx
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -186,6 +186,58 @@ def channel_options(
         runners.request(
             user_id, "GET", f"{entry.prefix}/config/options/{option_type}"
         )
+    )
+
+
+@app.get("/api/ai/config")
+def get_ai_config(user_id: int = Depends(current_user)):
+    return _json(runners.request(user_id, "GET", "/api/ai/config"))
+
+
+@app.post("/api/ai/config")
+async def save_ai_config(request: Request, user_id: int = Depends(current_user)):
+    payload = await request.json()
+    return _json(runners.request(user_id, "POST", "/api/ai/config", json=payload))
+
+
+@app.post("/api/channels/{channel}/resume-image")
+async def upload_resume_image(
+    channel: str,
+    file: UploadFile = File(...),
+    user_id: int = Depends(current_user),
+):
+    if channel != "boss":
+        raise HTTPException(400, "当前仅 Boss 支持图片简历")
+    content = await file.read()
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(413, "图片大小不能超过 10MB")
+    response = runners.request(
+        user_id,
+        "POST",
+        "/api/boss/config/resume-image",
+        files={
+            "file": (
+                file.filename or "resume.png",
+                content,
+                file.content_type or "application/octet-stream",
+            )
+        },
+    )
+    return _json(response)
+
+
+@app.get("/api/channels/{channel}/resume-image/content")
+def resume_image_content(channel: str, user_id: int = Depends(current_user)):
+    if channel != "boss":
+        raise HTTPException(400, "当前仅 Boss 支持图片简历")
+    response = runners.request(
+        user_id, "GET", "/api/boss/config/resume-image/content"
+    )
+    return Response(
+        content=response.content,
+        status_code=response.status_code,
+        media_type=response.headers.get("content-type", "image/png"),
+        headers={"Cache-Control": "no-store"},
     )
 
 

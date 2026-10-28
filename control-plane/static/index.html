@@ -329,6 +329,51 @@
   .modal-card h3 {
     font-family: var(--serif); font-size: 20px; margin: 0 0 4px; font-weight: 700;
   }
+  .modal-card.wide { width: min(760px, 100%); max-height: 88vh; overflow-y: auto; }
+  .settings-section { border-top: 1px solid var(--line); padding: 16px 0; }
+  .settings-section:first-of-type { border-top: none; padding-top: 4px; }
+  .settings-section h4 {
+    font-family: var(--serif); font-size: 15px; margin: 0 0 10px; font-weight: 700;
+  }
+  .settings-section textarea, .settings-section .text-input {
+    width: 100%; background: transparent; border: 1px solid var(--line-strong);
+    padding: 9px 10px; font: inherit; font-size: 13.5px; line-height: 1.7;
+    border-radius: 2px; color: var(--ink); resize: vertical;
+  }
+  .settings-section textarea:focus, .settings-section .text-input:focus {
+    outline: none; border-color: var(--ink);
+  }
+  .settings-section textarea + h4 { margin-top: 14px; }
+  .settings-actions {
+    display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 10px;
+  }
+  .mini-hint { font-size: 12px; color: var(--muted); }
+  .mini-label { display: block; font-size: 12px; color: var(--muted); margin: 4px 0 6px; }
+  .check {
+    display: flex; align-items: center; gap: 8px; font-size: 13px;
+    margin: 10px 0 0; color: var(--ink-soft);
+  }
+  .check input { width: 14px; height: 14px; accent-color: var(--seal); }
+  .resume-row { display: flex; gap: 14px; align-items: flex-start; }
+  .resume-thumb {
+    width: 96px; height: 128px; border: 1px dashed var(--line-strong);
+    display: grid; place-items: center; font-size: 12px; color: var(--muted);
+    overflow: hidden; background: #fff; flex: none;
+  }
+  .resume-thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .resume-meta { display: flex; flex-direction: column; gap: 8px; font-size: 13px; align-items: flex-start; }
+  .blacklist { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+  .blacklist .tag {
+    display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--line); padding: 4px 8px; font-size: 12.5px;
+  }
+  .blacklist .tag button {
+    border: none; background: none; color: var(--muted); font-size: 14px;
+    line-height: 1; padding: 0;
+  }
+  .blacklist .tag button:hover { color: var(--seal); }
+  .blacklist-add { display: flex; gap: 8px; }
+  .blacklist-add .text-input { flex: 1; }
   .modal-card .hint { font-size: 12.5px; color: var(--muted); margin: 0 0 18px; }
   .qr-frame {
     background: #fff; border: 1px solid var(--line);
@@ -433,6 +478,9 @@
         <div class="side-actions">
           <button id="loginBoss" class="btn ghost tiny">Boss 扫码登录</button>
         </div>
+        <div class="side-actions">
+          <button id="profileBtn" class="btn ghost tiny">资料与简历</button>
+        </div>
       </div>
 
       <div class="side-block ledger-block">
@@ -463,6 +511,63 @@
         <button id="sendBtn" class="btn" type="submit">发送</button>
       </form>
     </main>
+  </div>
+</div>
+
+<!-- 资料与简历 -->
+<div id="profileModal" class="modal hidden">
+  <div class="modal-card wide">
+    <h3>资料与简历</h3>
+    <p class="hint">AI 用这些信息生成打招呼语；图片简历会在投递时自动发送到 Boss。</p>
+
+    <section class="settings-section">
+      <h4>技能介绍</h4>
+      <textarea id="aiIntroduce" rows="4" placeholder="例如：5 年 Java 后端，做过支付与高并发系统，熟悉 Spring Cloud。"></textarea>
+      <h4>打招呼提示词</h4>
+      <textarea id="aiPrompt" rows="3" placeholder="例如：语气真诚简洁，突出与岗位相关的项目经验，不超过 80 字。"></textarea>
+      <div class="settings-actions">
+        <span id="aiHint" class="mini-hint"></span>
+        <button id="saveAi" class="btn tiny">保存资料</button>
+      </div>
+    </section>
+
+    <section class="settings-section">
+      <h4>图片简历</h4>
+      <div class="resume-row">
+        <div id="resumeThumb" class="resume-thumb">未上传</div>
+        <div class="resume-meta">
+          <div id="resumeStatus" class="mini-hint">未上传</div>
+          <input type="file" id="resumeFile" accept="image/png,image/jpeg,image/gif" class="hidden" />
+          <button id="uploadResume" class="btn ghost tiny">选择图片（≤10MB）</button>
+          <span id="resumeHint" class="mini-hint"></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="settings-section">
+      <h4>打招呼与发送</h4>
+      <label class="mini-label" for="sayHi">默认打招呼语</label>
+      <input id="sayHi" class="text-input" />
+      <label class="check"><input type="checkbox" id="enableAi" /> 用 AI 生成打招呼语</label>
+      <label class="check"><input type="checkbox" id="sendImgResume" /> 投递时自动发送图片简历</label>
+      <div class="settings-actions">
+        <span id="behaviorHint" class="mini-hint"></span>
+        <button id="saveBehavior" class="btn tiny">保存</button>
+      </div>
+    </section>
+
+    <section class="settings-section">
+      <h4>黑名单公司</h4>
+      <div id="blacklist" class="blacklist"></div>
+      <div class="blacklist-add">
+        <input id="blacklistInput" class="text-input" placeholder="公司名称" />
+        <button id="addBlacklist" class="btn ghost tiny">添加</button>
+      </div>
+    </section>
+
+    <div class="modal-actions">
+      <button id="closeProfile" class="btn tiny">关闭</button>
+    </div>
   </div>
 </div>
 
@@ -498,7 +603,8 @@ const show = (id, yes) => $(id).classList.toggle('hidden', !yes);
 const setError = (id, message) => { $(id).textContent = message || ''; };
 
 async function api(path, options = {}) {
-  const headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers || {});
+  const isForm = options.body instanceof FormData;
+  const headers = Object.assign(isForm ? {} : { 'Content-Type': 'application/json' }, options.headers || {});
   if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
   const res = await fetch(path, Object.assign({}, options, { headers }));
   if (res.status === 401 && state.token) { logout(); throw new Error('登录已过期，请重新登录'); }
@@ -809,6 +915,156 @@ async function showQr(url) {
   }
 }
 
+function hint(id, text) {
+  $(id).textContent = text || '';
+}
+
+async function openProfile() {
+  show('profileModal', true);
+  hint('aiHint', '');
+  hint('behaviorHint', '');
+  hint('resumeHint', '');
+  if (!state.runnerRunning) {
+    hint('aiHint', '先启动运行环境才能读取资料');
+    return;
+  }
+  await Promise.all([loadAiProfile(), loadBehavior(), loadResumeInfo(), loadBlacklist()]);
+}
+
+async function loadAiProfile() {
+  try {
+    const data = await api('/api/ai/config');
+    const ai = (data && data.data) || {};
+    $('aiIntroduce').value = ai.introduce || '';
+    $('aiPrompt').value = ai.prompt || '';
+  } catch (e) { hint('aiHint', e.message); }
+}
+
+async function saveAiProfile() {
+  hint('aiHint', '保存中…');
+  try {
+    await api('/api/ai/config', {
+      method: 'POST',
+      body: JSON.stringify({
+        introduce: $('aiIntroduce').value,
+        prompt: $('aiPrompt').value,
+      }),
+    });
+    hint('aiHint', '已保存');
+  } catch (e) { hint('aiHint', e.message); }
+}
+
+async function loadBehavior() {
+  try {
+    const data = await api('/api/channels/boss/config');
+    const cfg = data.config || {};
+    $('sayHi').value = cfg.sayHi || '';
+    $('enableAi').checked = Number(cfg.enableAi) === 1;
+    $('sendImgResume').checked = Number(cfg.sendImgResume) === 1;
+  } catch (e) { hint('behaviorHint', e.message); }
+}
+
+async function saveBehavior() {
+  hint('behaviorHint', '保存中…');
+  try {
+    await api('/api/channels/boss/config', {
+      method: 'PUT',
+      body: JSON.stringify({
+        sayHi: $('sayHi').value,
+        enableAi: $('enableAi').checked ? 1 : 0,
+        sendImgResume: $('sendImgResume').checked ? 1 : 0,
+      }),
+    });
+    hint('behaviorHint', '已保存');
+  } catch (e) { hint('behaviorHint', e.message); }
+}
+
+async function loadResumeInfo() {
+  try {
+    const data = await api('/api/channels/boss/config');
+    const meta = data.resumeImage || { exists: false };
+    if (meta.exists) {
+      const size = meta.size ? Math.round(meta.size / 1024) + ' KB' : '';
+      $('resumeStatus').textContent = [meta.fileName, size].filter(Boolean).join(' · ');
+      const res = await fetch('/api/channels/boss/resume-image/content', {
+        headers: { 'Authorization': 'Bearer ' + state.token },
+      });
+      if (res.ok) {
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        $('resumeThumb').innerHTML = '';
+        const img = document.createElement('img');
+        img.src = url;
+        img.alt = '图片简历';
+        $('resumeThumb').appendChild(img);
+      }
+    } else {
+      $('resumeStatus').textContent = '未上传';
+      $('resumeThumb').textContent = '未上传';
+    }
+  } catch (e) { hint('resumeHint', e.message); }
+}
+
+async function uploadResume(file) {
+  if (!file) return;
+  hint('resumeHint', '上传中…');
+  const form = new FormData();
+  form.append('file', file);
+  try {
+    await api('/api/channels/boss/resume-image', { method: 'POST', body: form });
+    hint('resumeHint', '已上传');
+    $('resumeFile').value = '';
+    await loadResumeInfo();
+  } catch (e) { hint('resumeHint', e.message); }
+}
+
+async function loadBlacklist() {
+  try {
+    const data = await api('/api/channels/boss/blacklist');
+    const items = Array.isArray(data) ? data : [];
+    $('blacklist').innerHTML = '';
+    if (!items.length) {
+      $('blacklist').innerHTML = '<span class="mini-hint">暂无黑名单</span>';
+      return;
+    }
+    items.forEach(item => {
+      const tag = document.createElement('span');
+      tag.className = 'tag';
+      tag.textContent = item.value || '';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = '×';
+      btn.title = '移除';
+      btn.onclick = async () => {
+        try {
+          await api('/api/channels/boss/blacklist/' + item.id, { method: 'DELETE' });
+          loadBlacklist();
+        } catch (e) { /* ignore */ }
+      };
+      tag.appendChild(btn);
+      $('blacklist').appendChild(tag);
+    });
+  } catch (e) {
+    $('blacklist').innerHTML = `<span class="mini-hint">${e.message}</span>`;
+  }
+}
+
+async function addBlacklist() {
+  const input = $('blacklistInput');
+  const value = input.value.trim();
+  if (!value) return;
+  try {
+    await api('/api/channels/boss/blacklist', {
+      method: 'POST',
+      body: JSON.stringify({ type: 'company', value }),
+    });
+    input.value = '';
+    loadBlacklist();
+  } catch (e) {
+    $('blacklist').innerHTML = `<span class="mini-hint">${e.message}</span>`;
+  }
+}
+
 function bind() {
   const submitAuth = async (path) => {
     setError('authError', '');
@@ -832,6 +1088,13 @@ function bind() {
   $('startRunner').onclick = startRunner;
   $('stopRunner').onclick = stopRunner;
   $('loginBoss').onclick = openQr;
+  $('profileBtn').onclick = openProfile;
+  $('closeProfile').onclick = () => show('profileModal', false);
+  $('saveAi').onclick = saveAiProfile;
+  $('saveBehavior').onclick = saveBehavior;
+  $('uploadResume').onclick = () => $('resumeFile').click();
+  $('resumeFile').onchange = (e) => uploadResume(e.target.files[0]);
+  $('addBlacklist').onclick = addBlacklist;
   $('closeQr').onclick = () => show('qrModal', false);
   $('refreshQr').onclick = () => showQr('/api/channels/boss/login/qr');
 
