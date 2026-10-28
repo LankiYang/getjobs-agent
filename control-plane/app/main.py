@@ -1,11 +1,13 @@
 """getjobs control plane: auth + per-user isolated runners + channel proxy."""
 
+import json
 from pathlib import Path
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import agent, runners
@@ -56,6 +58,7 @@ def health() -> dict:
 
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+app.mount("/assets", StaticFiles(directory=STATIC_DIR), name="assets")
 
 
 @app.get("/")
@@ -310,6 +313,31 @@ def agent_chat(body: ChatRequest, user_id: int = Depends(current_user)) -> dict:
         raise HTTPException(503, str(exc)) from exc
     except httpx.HTTPError as exc:
         raise HTTPException(502, f"模型调用失败: {exc}") from exc
+
+
+@app.post("/api/agent/chat/stream")
+def agent_chat_stream(body: ChatRequest, user_id: int = Depends(current_user)):
+    def events():
+        try:
+            for event in agent.run_chat_stream(
+                user_id, body.session_id, body.message
+            ):
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        except agent.AgentNotConfigured as exc:
+            payload = {"type": "error", "message": str(exc)}
+            yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+        except httpx.HTTPError as exc:
+            payload = {"type": "error", "message": f"模型调用失败: {exc}"}
+            yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+        except Exception as exc:
+            payload = {"type": "error", "message": str(exc)}
+            yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get("/api/agent/history")

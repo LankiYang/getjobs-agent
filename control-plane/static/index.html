@@ -26,6 +26,7 @@
   html, body { height: 100%; }
   body {
     margin: 0;
+    overflow: hidden;
     font-family: var(--sans);
     color: var(--ink);
     background-color: var(--paper);
@@ -48,7 +49,8 @@
 
   /* ---------- auth ---------- */
   .auth-screen {
-    min-height: 100vh;
+    height: 100vh;
+    overflow-y: auto;
     display: grid;
     grid-template-columns: 1.15fr .85fr;
   }
@@ -136,7 +138,7 @@
   }
 
   /* ---------- app ---------- */
-  .app { min-height: 100vh; display: flex; flex-direction: column; }
+  .app { height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
   .topbar {
     display: flex; align-items: center; gap: 18px;
     padding: 20px clamp(18px, 3vw, 36px) 16px;
@@ -194,9 +196,9 @@
   .ledger .num { font-family: var(--serif); font-size: 26px; line-height: 1.1; }
   .ledger .lbl { font-size: 11px; color: var(--muted); margin-top: 6px; }
 
-  .main { display: flex; flex-direction: column; min-width: 0; }
+  .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
   .chat {
-    flex: 1; overflow-y: auto; padding: 30px clamp(18px, 4vw, 56px) 24px;
+    flex: 1; min-height: 0; overflow-y: auto; padding: 30px clamp(18px, 4vw, 56px) 24px;
     display: flex; flex-direction: column; gap: 22px;
     scroll-behavior: smooth;
   }
@@ -223,6 +225,39 @@
     color: var(--muted); margin-bottom: 7px;
   }
   .msg .body { font-size: 15px; line-height: 1.85; white-space: pre-wrap; word-break: break-word; }
+  .msg .body.md { white-space: normal; }
+  .msg .body.md > :first-child { margin-top: 0; }
+  .msg .body.md > :last-child { margin-bottom: 0; }
+  .msg .body.md p { margin: 0 0 10px; }
+  .msg .body.md h1, .msg .body.md h2, .msg .body.md h3, .msg .body.md h4 {
+    font-family: var(--serif); font-weight: 700; line-height: 1.5;
+    margin: 18px 0 8px;
+  }
+  .msg .body.md h1 { font-size: 21px; }
+  .msg .body.md h2 { font-size: 18px; }
+  .msg .body.md h3 { font-size: 16px; }
+  .msg .body.md h4 { font-size: 15px; }
+  .msg .body.md ul, .msg .body.md ol { margin: 6px 0 10px; padding-left: 22px; }
+  .msg .body.md li { margin: 3px 0; }
+  .msg .body.md code {
+    font-family: var(--mono); font-size: 12.5px;
+    background: rgba(24,27,24,.06); padding: 1px 5px; border-radius: 2px;
+  }
+  .msg .body.md pre {
+    background: var(--paper-2); border: 1px solid var(--line);
+    padding: 12px 14px; margin: 10px 0; overflow-x: auto;
+  }
+  .msg .body.md pre code { background: none; padding: 0; font-size: 12.5px; }
+  .msg .body.md blockquote {
+    margin: 10px 0; padding: 2px 0 2px 12px;
+    border-left: 2px solid var(--line-strong); color: var(--muted);
+  }
+  .msg .body.md a { color: var(--seal); text-underline-offset: 3px; }
+  .msg .body.md table { border-collapse: collapse; margin: 10px 0; font-size: 13.5px; }
+  .msg .body.md th, .msg .body.md td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; }
+  .msg .body.md th { background: rgba(24,27,24,.04); font-weight: 600; }
+  .msg .body.md hr { border: none; border-top: 1px solid var(--line); margin: 14px 0; }
+  .msg .body.md strong { font-weight: 700; }
   .msg.agent { align-self: flex-start; padding-left: 16px; position: relative; }
   .msg.agent::before {
     content: ""; position: absolute; left: 0; top: 2px; bottom: 2px; width: 2px;
@@ -241,6 +276,11 @@
     color: var(--muted); max-width: 90%;
   }
   .msg.pending .body::after {
+    content: ""; display: inline-block; width: 7px; height: 14px;
+    background: var(--seal); margin-left: 4px; vertical-align: -2px;
+    animation: blink 1s steps(2) infinite;
+  }
+  .msg.streaming .body::after {
     content: ""; display: inline-block; width: 7px; height: 14px;
     background: var(--seal); margin-left: 4px; vertical-align: -2px;
     animation: blink 1s steps(2) infinite;
@@ -442,13 +482,17 @@
   </div>
 </div>
 
+<script src="/assets/vendor/marked.min.js"></script>
+<script src="/assets/vendor/purify.min.js"></script>
 <script>
 const state = {
   token: localStorage.getItem('getjobs_token') || '',
   user: null,
   sessionId: localStorage.getItem('getjobs_session') || '',
   busy: false,
+  runnerRunning: false,
 };
+if (window.marked) marked.setOptions({ gfm: true, breaks: true });
 const $ = (id) => document.getElementById(id);
 const show = (id, yes) => $(id).classList.toggle('hidden', !yes);
 const setError = (id, message) => { $(id).textContent = message || ''; };
@@ -513,16 +557,26 @@ async function loadMe() {
   const data = await api('/api/me');
   state.user = data.user;
   $('who').textContent = data.user.email;
-  await Promise.all([loadRunner(), loadChannels(), loadStats()]);
+  await loadRunner();
+  await Promise.all([
+    loadChannels(),
+    state.runnerRunning ? loadStats() : Promise.resolve(),
+  ]);
 }
 
 function setRunnerState(running, port) {
+  state.runnerRunning = running;
   $('runnerDot').classList.toggle('on', running);
   $('runnerDot').classList.toggle('busy', state.busy);
   $('runnerText').textContent = running ? '运行中' : '未启动';
   $('runnerPort').textContent = running && port ? ':' + port : '';
   $('startRunner').disabled = running || state.busy;
   $('stopRunner').disabled = !running || state.busy;
+  if (!running) {
+    $('statsTotal').textContent = '—';
+    $('statsDelivered').textContent = '—';
+    $('statsFiltered').textContent = '—';
+  }
 }
 
 async function loadRunner() {
@@ -546,6 +600,12 @@ async function loadChannels() {
 }
 
 async function loadStats() {
+  if (!state.runnerRunning) {
+    $('statsTotal').textContent = '—';
+    $('statsDelivered').textContent = '—';
+    $('statsFiltered').textContent = '—';
+    return;
+  }
   try {
     const stats = await api('/api/channels/boss/stats');
     const kpi = stats.kpi || {};
@@ -572,7 +632,7 @@ async function startRunner() {
   }
   state.busy = false;
   $('startRunner').textContent = '启动';
-  loadRunner();
+  loadRunner().then(() => { if (state.runnerRunning) loadStats(); });
 }
 
 async function stopRunner() {
@@ -583,6 +643,45 @@ async function stopRunner() {
   loadRunner();
 }
 
+function ensureToolBox(container) {
+  let box = container.querySelector('.tools');
+  if (!box) {
+    box = document.createElement('div');
+    box.className = 'tools';
+    container.appendChild(box);
+  }
+  return box;
+}
+
+function addToolChip(container, name, ok) {
+  const box = ensureToolBox(container);
+  const chip = document.createElement('span');
+  chip.className = 'tool' + (ok === null ? '' : (ok ? ' ok' : ' bad'));
+  chip.dataset.name = name;
+  chip.textContent = name + (ok === null ? ' …' : (ok ? ' ✓' : ' ×'));
+  box.appendChild(chip);
+}
+
+function updateToolChip(container, name, ok) {
+  const box = container.querySelector('.tools');
+  if (!box) return addToolChip(container, name, ok);
+  const chips = [...box.querySelectorAll('.tool')].filter(c => c.dataset.name === name);
+  const chip = chips.find(c => !c.classList.contains('ok') && !c.classList.contains('bad'))
+    || chips[chips.length - 1];
+  if (!chip) return addToolChip(container, name, ok);
+  chip.className = 'tool ' + (ok ? 'ok' : 'bad');
+  chip.textContent = name + (ok ? ' ✓' : ' ×');
+}
+
+function renderMarkdown(body, text) {
+  if (window.marked && window.DOMPurify) {
+    body.innerHTML = DOMPurify.sanitize(marked.parse(text || ''));
+    body.classList.add('md');
+  } else {
+    body.textContent = text || '';
+  }
+}
+
 async function sendMessage() {
   const input = $('input');
   const text = input.value.trim();
@@ -590,29 +689,103 @@ async function sendMessage() {
   input.value = '';
   input.style.height = 'auto';
   addMessage('user', text);
+
   state.busy = true;
   $('sendBtn').disabled = true;
 
-  const pending = addMessage('agent', '正在处理…', null);
-  pending.classList.add('pending');
+  const el = addMessage('agent', '', null);
+  el.classList.add('streaming');
+  const body = el.querySelector('.body');
+  body.textContent = '思考中…';
+  let full = '';
+  let scheduled = false;
+
+  const render = () => {
+    renderMarkdown(body, full || '');
+    $('chat').scrollTop = $('chat').scrollHeight;
+  };
+  const scheduleRender = () => {
+    if (scheduled) return;
+    scheduled = true;
+    setTimeout(() => { scheduled = false; render(); }, 80);
+  };
 
   try {
-    const data = await api('/api/agent/chat', {
+    const res = await fetch('/api/agent/chat/stream', {
       method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'text/event-stream',
+        'Authorization': 'Bearer ' + state.token,
+      },
       body: JSON.stringify({ message: text, session_id: state.sessionId || null }),
     });
-    state.sessionId = data.sessionId;
-    localStorage.setItem('getjobs_session', data.sessionId);
-    pending.remove();
-    addMessage('agent', data.reply || '(无回复)', data.toolCalls);
-    (data.qrUrls || []).forEach(url => showQr(url));
-    loadStats();
+
+    if (!res.ok) {
+      let detail = '请求失败 ' + res.status;
+      try {
+        const data = await res.json();
+        detail = data.detail || data.message || detail;
+        if (detail && typeof detail === 'object') detail = detail.message || JSON.stringify(detail);
+      } catch { /* ignore */ }
+      throw new Error(detail);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finished = false;
+
+    const handle = (payload) => {
+      let ev;
+      try { ev = JSON.parse(payload); } catch { return; }
+      if (ev.type === 'session') {
+        state.sessionId = ev.sessionId;
+        localStorage.setItem('getjobs_session', ev.sessionId);
+      } else if (ev.type === 'text') {
+        full += ev.text || '';
+        scheduleRender();
+      } else if (ev.type === 'tool_start') {
+        addToolChip(el, ev.name, null);
+      } else if (ev.type === 'tool_result') {
+        updateToolChip(el, ev.name, !!ev.ok);
+      } else if (ev.type === 'qr') {
+        showQr(ev.url);
+      } else if (ev.type === 'done') {
+        full = ev.reply || full;
+        render();
+        state.sessionId = ev.sessionId;
+        localStorage.setItem('getjobs_session', ev.sessionId);
+        finished = true;
+      } else if (ev.type === 'error') {
+        throw new Error(ev.message || '模型返回错误');
+      }
+    };
+
+    while (!finished) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let index;
+      while ((index = buffer.indexOf('\n\n')) >= 0) {
+        const chunk = buffer.slice(0, index);
+        buffer = buffer.slice(index + 2);
+        for (const line of chunk.split('\n')) {
+          if (line.startsWith('data:')) handle(line.slice(5).trim());
+        }
+      }
+    }
+
+    if (!full) body.textContent = '（无回复）';
+    if (state.runnerRunning) loadStats();
   } catch (e) {
-    pending.remove();
-    addMessage('system', '出错了：' + e.message);
+    body.textContent = '出错了：' + e.message;
+    body.classList.remove('md');
+  } finally {
+    el.classList.remove('streaming');
+    state.busy = false;
+    $('sendBtn').disabled = false;
   }
-  state.busy = false;
-  $('sendBtn').disabled = false;
 }
 
 async function openQr() {

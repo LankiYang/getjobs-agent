@@ -568,21 +568,7 @@ def _run_anthropic(user_id: int, session_id: str) -> dict:
     }
 
 
-def run_chat(user_id: int, session_id: str | None, message: str) -> dict:
-    if not configured():
-        raise AgentNotConfigured(
-            "未配置对话模型：OpenAI 兼容请设置 AGENT_BASE_URL/AGENT_MODEL；"
-            "Anthropic 兼容请设置 AGENT_PROVIDER=anthropic 和 AGENT_ANTHROPIC_BASE_URL"
-        )
-    if not message.strip():
-        raise ValueError("消息不能为空")
-
-    session_id = session_id or uuid.uuid4().hex
-    _save_message(user_id, session_id, "user", message)
-
-    if PROVIDER == "anthropic":
-        return _run_anthropic(user_id, session_id)
-
+def _run_openai(user_id: int, session_id: str) -> dict:
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     messages.extend(_load_history(user_id, session_id))
 
@@ -647,4 +633,210 @@ def run_chat(user_id: int, session_id: str | None, message: str) -> dict:
         "reply": fallback,
         "toolCalls": tool_events,
         "qrUrls": qr_urls,
+    }
+
+
+def _anthropic_stream(system: str, messages: list[dict]):
+    headers = {"content-type": "application/json", "anthropic-version": "2023-06-01"}
+    if ANTHROPIC_TOKEN and ANTHROPIC_TOKEN != "PROXY_MANAGED":
+        headers["authorization"] = f"Bearer {ANTHROPIC_TOKEN}"
+    body = {
+        "model": MODEL,
+        "max_tokens": MAX_TOKENS,
+        "system": system,
+        "messages": messages,
+        "tools": _anthropic_tools(),
+        "tool_choice": {"type": "auto"},
+        "stream": True,
+    }
+
+    blocks: dict[int, dict] = {}
+    with httpx.stream(
+        "POST",
+        f"{ANTHROPIC_BASE_URL}/v1/messages",
+        headers=headers,
+        json=body,
+        timeout=None,
+    ) as response:
+        response.raise_for_status()
+        for line in response.iter_lines():
+            if not line or line.startswith("event:") or not line.startswith("data:"):
+                continue
+            payload = line[5:].strip()
+            if not payload or payload == "[DONE]":
+                continue
+            try:
+                event = json.loads(payload)
+            except json.JSONDecodeError:
+                continue
+            event_type = event.get("type")
+            index = event.get("index")
+            if event_type == "content_block_start":
+                block = event.get("content_block") or {}
+                blocks[index] = {
+                    "type": block.get("type"),
+                    "text": block.get("text") or "",
+                    "id": block.get("id"),
+                    "name": block.get("name"),
+                    "json": "",
+                }
+            elif event_type == "content_block_delta":
+                block = blocks.get(index)
+                if not block:
+                    continue
+                delta = event.get("delta") or {}
+                delta_type = delta.get("type")
+                if delta_type == "text_delta":
+                    text = delta.get("text") or ""
+                    block["text"] += text
+                    if text:
+                        yield {"type": "text", "text": text}
+                elif delta_type == "input_json_delta":
+                    block["json"] += delta.get("partial_json") or ""
+            elif event_type == "message_stop":
+                break
+
+    ordered = [
+        blocks[i]
+        for i in sorted(blocks)
+        if blocks[i].get("type") in ("text", "tool_use")
+    ]
+    yield {"type": "blocks", "blocks": ordered}
+
+
+def _stream_anthropic_loop(user_id: int, session_id: str):
+    messages = _anthropic_history(user_id, session_id)
+    tool_events: list[dict] = []
+    qr_urls: list[str] = []
+    collected: list[str] = []
+
+    for _ in range(MAX_STEPS):
+        blocks = None
+        for event in _anthropic_stream(SYSTEM_PROMPT, messages):
+            if event["type"] == "text":
+                collected.append(event["text"])
+                yield event
+            elif event["type"] == "blocks":
+                blocks = event["blocks"]
+        if blocks is None:
+            raise RuntimeError("模型没有返回内容")
+
+        tool_uses = [block for block in blocks if block.get("type") == "tool_use"]
+        if not tool_uses:
+            reply = "".join(collected).strip()
+            _save_message(user_id, session_id, "assistant", reply)
+            yield {
+                "type": "done",
+                "sessionId": session_id,
+                "reply": reply,
+                "toolCalls": tool_events,
+                "qrUrls": qr_urls,
+            }
+            return
+
+        assistant_blocks = []
+        for block in blocks:
+            if block["type"] == "text" and block["text"]:
+                assistant_blocks.append({"type": "text", "text": block["text"]})
+            elif block["type"] == "tool_use":
+                try:
+                    tool_input = json.loads(block["json"] or "{}")
+                except json.JSONDecodeError:
+                    tool_input = {}
+                if not isinstance(tool_input, dict):
+                    tool_input = {}
+                assistant_blocks.append(
+                    {
+                        "type": "tool_use",
+                        "id": block["id"],
+                        "name": block["name"],
+                        "input": tool_input,
+                    }
+                )
+        messages.append({"role": "assistant", "content": assistant_blocks})
+
+        result_blocks = []
+        for block in assistant_blocks:
+            if block["type"] != "tool_use":
+                continue
+            name = block["name"]
+            args = block["input"]
+            yield {"type": "tool_start", "name": name}
+            try:
+                result = execute_tool(user_id, name, args)
+            except AgentToolError as exc:
+                result = {"error": str(exc)}
+            except runners.RunnerError as exc:
+                result = {"error": exc.message}
+            except httpx.HTTPError as exc:
+                result = {"error": f"后端请求失败: {exc}"}
+
+            if isinstance(result, dict) and result.get("qrUrl"):
+                qr_urls.append(result["qrUrl"])
+                yield {"type": "qr", "url": result["qrUrl"]}
+            tool_events.append({"name": name, "arguments": args, "result": result})
+            failed = isinstance(result, dict) and bool(result.get("error"))
+            yield {"type": "tool_result", "name": name, "ok": not failed}
+            result_blocks.append(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": block["id"],
+                    "content": json.dumps(result, ensure_ascii=False),
+                }
+            )
+        messages.append({"role": "user", "content": result_blocks})
+
+    fallback = "这轮操作步骤过多，已先暂停。请把条件再明确一下，或者告诉我下一步只做哪件事。"
+    _save_message(user_id, session_id, "assistant", fallback)
+    yield {
+        "type": "done",
+        "sessionId": session_id,
+        "reply": fallback,
+        "toolCalls": tool_events,
+        "qrUrls": qr_urls,
+    }
+
+
+def run_chat(user_id: int, session_id: str | None, message: str) -> dict:
+    if not configured():
+        raise AgentNotConfigured(
+            "未配置对话模型：OpenAI 兼容请设置 AGENT_BASE_URL/AGENT_MODEL；"
+            "Anthropic 兼容请设置 AGENT_PROVIDER=anthropic 和 AGENT_ANTHROPIC_BASE_URL"
+        )
+    if not message.strip():
+        raise ValueError("消息不能为空")
+
+    session_id = session_id or uuid.uuid4().hex
+    _save_message(user_id, session_id, "user", message)
+
+    if PROVIDER == "anthropic":
+        return _run_anthropic(user_id, session_id)
+    return _run_openai(user_id, session_id)
+
+
+def run_chat_stream(user_id: int, session_id: str | None, message: str):
+    if not configured():
+        raise AgentNotConfigured(
+            "未配置对话模型：OpenAI 兼容请设置 AGENT_BASE_URL/AGENT_MODEL；"
+            "Anthropic 兼容请设置 AGENT_PROVIDER=anthropic 和 AGENT_ANTHROPIC_BASE_URL"
+        )
+    if not message.strip():
+        raise ValueError("消息不能为空")
+
+    session_id = session_id or uuid.uuid4().hex
+    _save_message(user_id, session_id, "user", message)
+    yield {"type": "session", "sessionId": session_id}
+
+    if PROVIDER == "anthropic":
+        yield from _stream_anthropic_loop(user_id, session_id)
+        return
+
+    result = _run_openai(user_id, session_id)
+    yield {"type": "text", "text": result["reply"]}
+    yield {
+        "type": "done",
+        "sessionId": result["sessionId"],
+        "reply": result["reply"],
+        "toolCalls": result["toolCalls"],
+        "qrUrls": result["qrUrls"],
     }
