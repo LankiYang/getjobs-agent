@@ -138,6 +138,49 @@ def list_channels(user_id: int = Depends(current_user)) -> dict:
     }
 
 
+def _channel_state(data: dict | None) -> str:
+    if not isinstance(data, dict):
+        return "unknown"
+    if data.get("isLoggedIn"):
+        return "logged_in"
+    login_state = data.get("loginState")
+    if login_state == "qr_ready":
+        return "pending_scan"
+    if login_state == "qr_expired":
+        return "qr_expired"
+    if "browserReady" in data:
+        return "not_logged_in" if data.get("browserReady") else "not_checked"
+    return "not_logged_in"
+
+
+@app.get("/api/channels/status")
+def channels_status(user_id: int = Depends(current_user)) -> dict:
+    runner = runners.status(user_id)
+    running = bool(runner.get("running"))
+    items = []
+    for channel in CHANNELS.values():
+        entry = {
+            "key": channel.key,
+            "label": channel.label,
+            "maintained": channel.maintained,
+            "loginQr": bool(channel.login_qr),
+            "state": "runner_stopped" if not running else "unknown",
+            "detail": None,
+        }
+        if running:
+            try:
+                response = runners.request(
+                    user_id, "GET", f"{channel.prefix}/status", timeout=8
+                )
+                data = response.json() if response.status_code == 200 else None
+                entry["state"] = _channel_state(data)
+                entry["detail"] = data
+            except (runners.RunnerError, httpx.HTTPError, ValueError):
+                entry["state"] = "unknown"
+        items.append(entry)
+    return {"runnerRunning": running, "channels": items}
+
+
 def _channel(channel: str):
     entry = CHANNELS.get(channel)
     if not entry:

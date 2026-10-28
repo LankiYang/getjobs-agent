@@ -270,7 +270,7 @@ def status(user_id: int) -> dict:
     }
 
 
-def request(user_id: int, method: str, path: str, *, params=None, json=None, files=None, stream: bool = False):
+def request(user_id: int, method: str, path: str, *, params=None, json=None, files=None, timeout: float = 60, stream: bool = False):
     row = _row(user_id)
     if not row or not healthy(row):
         raise RunnerError("runner 未运行，请先启动", status_code=409)
@@ -284,5 +284,5 @@ def request(user_id: int, method: str, path: str, *, params=None, json=None, fil
         params=params,
         json=json,
         files=files,
-        timeout=60,
+        timeout=timeout,
     )

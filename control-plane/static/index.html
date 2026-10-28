@@ -197,6 +197,17 @@
     color: var(--muted); border-radius: 2px; background: transparent;
   }
   .chip.on { border-color: var(--green); color: var(--green); }
+  .channel-list { display: flex; flex-direction: column; gap: 9px; }
+  .channel-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  .channel-row .dot { flex: none; }
+  .chan-name { color: var(--ink); }
+  .chan-state { margin-left: auto; font-size: 11.5px; color: var(--muted); }
+  .chan-state.ok { color: var(--green); }
+  .chan-state.bad { color: var(--seal); }
+  .chan-state.warn { color: var(--amber); }
+  .dot.bad { background: var(--seal); }
+  .dot.warn { background: var(--amber); }
+  .dot.idle { background: var(--line-strong); }
 
   .ledger { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; border: 1px solid var(--line); }
   .ledger div {
@@ -575,7 +586,7 @@
 
       <div class="side-block">
         <h3>渠道</h3>
-        <div id="channels" class="chips"></div>
+        <div id="channels" class="channel-list"></div>
         <div class="side-actions">
           <button id="loginBoss" class="btn ghost tiny">Boss 扫码登录</button>
         </div>
@@ -912,11 +923,7 @@ async function loadRunner() {
     const wasRunning = state.runnerRunning;
     const data = await api('/api/me/runner');
     setRunnerState(!!data.running, data.port);
-    if (state.runnerRunning) {
-      loadBossStatus();
-    } else {
-      setBossLoggedIn(false);
-    }
+    if (!state.runnerRunning) setBossLoggedIn(false);
     if (state.view === 'dash' && !wasRunning && state.runnerRunning) loadDashboard();
   } catch (e) { /* ignore */ }
 }
@@ -951,6 +958,7 @@ function startQrPolling() {
       stopQrPolling();
       show('qrModal', false);
       addMessage('system', 'Boss 已登录');
+      loadChannels();
       if (state.view === 'dash') loadDashboard();
       else loadStats();
     } else if (data.loginState === 'qr_expired') {
@@ -1131,16 +1139,45 @@ function renderJobRows(items) {
   });
 }
 
+const CHANNEL_STATE_TEXT = {
+  logged_in: ['已连接', 'ok'],
+  not_logged_in: ['未登录', 'bad'],
+  pending_scan: ['待扫码', 'warn'],
+  qr_expired: ['二维码过期', 'warn'],
+  not_checked: ['未检测', 'idle'],
+  runner_stopped: ['环境未启动', 'idle'],
+  unknown: ['检测失败', 'idle'],
+};
+
 async function loadChannels() {
   try {
-    const data = await api('/api/channels');
-    $('channels').innerHTML = '';
-    data.channels.forEach(c => {
-      const chip = document.createElement('span');
-      chip.className = 'chip' + (c.maintained ? ' on' : '');
-      chip.textContent = c.label + (c.maintained ? '' : '（不维护）');
-      $('channels').appendChild(chip);
+    const data = await api('/api/channels/status');
+    const box = $('channels');
+    box.innerHTML = '';
+    let bossLoggedIn = false;
+    (data.channels || []).forEach(channel => {
+      const row = document.createElement('div');
+      row.className = 'channel-row';
+      const dot = document.createElement('span');
+      const name = document.createElement('span');
+      name.className = 'chan-name';
+      name.textContent = channel.label;
+      const state = document.createElement('span');
+      if (!channel.maintained) {
+        dot.className = 'dot idle';
+        state.className = 'chan-state';
+        state.textContent = '停止维护';
+      } else {
+        const [text, tone] = CHANNEL_STATE_TEXT[channel.state] || ['未知', 'idle'];
+        dot.className = 'dot ' + (tone === 'ok' ? 'on' : tone);
+        state.className = 'chan-state ' + (tone === 'idle' ? '' : tone);
+        state.textContent = text;
+      }
+      row.append(dot, name, state);
+      box.appendChild(row);
+      if (channel.key === 'boss' && channel.state === 'logged_in') bossLoggedIn = true;
     });
+    setBossLoggedIn(bossLoggedIn);
   } catch (e) { /* ignore */ }
 }
 
@@ -1337,6 +1374,7 @@ async function openQr() {
     if (data && data.loggedIn) {
       setBossLoggedIn(true);
       addMessage('system', 'Boss 已登录');
+      loadChannels();
       return;
     }
     await showQr('/api/channels/boss/login/qr');
@@ -1595,7 +1633,11 @@ if (state.token) {
   show('app', true);
   loadMe().catch(() => logout());
 }
-setInterval(() => { if (state.token && !state.busy) loadRunner(); }, 5000);
+setInterval(() => {
+  if (!state.token || state.busy) return;
+  loadRunner();
+  if (state.runnerRunning) loadChannels();
+}, 5000);
 </script>
 </body>
 </html>
