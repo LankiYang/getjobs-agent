@@ -185,6 +185,7 @@ def start(user_id: int) -> dict:
 
     log_path = data_dir / "logs" / "runner.log"
     log_file = open(log_path, "ab")
+    _kill_vnc_for_port(port)
     process = _spawn(command, str(data_dir), env, log_file)
     _update(user_id, pid=process.pid, started_at=_now())
 
@@ -249,6 +250,7 @@ def stop(user_id: int) -> dict:
     if pid and _alive(pid):
         _kill_tree(pid)
 
+    _kill_vnc_for_port(row["port"])
     _update(user_id, status="stopped", pid=None)
     return status(user_id)
 
@@ -290,6 +292,18 @@ def _port_listening(port: int) -> bool:
         return sock.connect_ex(("127.0.0.1", port)) == 0
 
 
+def _kill_vnc_for_port(port: int) -> None:
+    if WINDOWS:
+        return
+    try:
+        subprocess.run(
+            ["pkill", "-f", f"x11vnc.*-rfbport {port}"],
+            capture_output=True,
+        )
+    except Exception:
+        pass
+
+
 def ensure_vnc(user_id: int) -> int:
     row = _row(user_id)
     if not row or not healthy(row):
@@ -312,6 +326,7 @@ def ensure_vnc(user_id: int) -> int:
         "-nopw",
         "-forever",
         "-shared",
+        "-timeout", "600",
         "-quiet",
     ]
     try:

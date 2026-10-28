@@ -6,7 +6,7 @@ import uuid
 
 import httpx
 
-from . import runners
+from . import runners, watch
 from .channels import CHANNELS
 from .db import get_conn
 
@@ -57,6 +57,12 @@ CONFIG_FIELDS = {
 
 MULTI_FIELDS = {"industry", "experience", "degree", "scale", "stage", "salary"}
 
+_active_sessions: dict[int, str] = {}
+
+
+def _remember_session(user_id: int, session_id: str) -> None:
+    _active_sessions[user_id] = session_id
+
 
 class AgentNotConfigured(RuntimeError):
     pass
@@ -78,7 +84,7 @@ SYSTEM_PROMPT = f"""你是一个求职投递助手，为当前登录用户服务
 3. 把用户口语翻译成平台条件时，先调用 list_options 校验城市、薪资等取值，禁止编造。
 4. 生成计划后用简洁中文展示：渠道、关键词、城市、薪资、经验/学历，以及平台每日投递上限提醒。
 5. {"除非用户在最近一条消息里明确同意开始（如“开始吧”“确认投递”），否则不要调用 start_application。展示计划后先等用户确认。" if REQUIRE_CONFIRM else "用户已明确要求投递且关键信息齐全时，可以直接调用 start_application(confirm=true)。"}
-6. 启动后告诉用户可以随时问进度；用户说停止时调用 stop_application。
+6. 启动后告诉用户可以随时问进度；用户说停止时调用 stop_application。用户说“投 N 个岗位”时，调用 start_application 并传 max_count=N，达到数量后系统会自动停止并主动发消息汇报；不要说做不到。
 7. 如果 status 显示未登录，调用 open_login 并把返回的二维码地址告诉用户，让他扫码；不要尝试代填验证码。
 8. 不要编造投递结果，不要承诺拿到面试；提醒平台风控和每日次数限制。
 9. 用户想优化 AI 生成的开场白时，用 get_ai_greeting_profile 读取他的技能介绍和提示词，再按他的真实经历更新；图片简历需要用户自己在网页「资料与简历」里上传，可用 get_resume_status 检查是否已就绪。
@@ -212,6 +218,10 @@ TOOLS = [
                 "properties": {
                     "channel": {"type": "string", "enum": ["boss", "liepin"]},
                     "confirm": {"type": "boolean"},
+                    "max_count": {
+                        "type": "integer",
+                        "description": "本轮最多成功投递多少个岗位；用户说“投 N 个”时传入（1-100），不传表示不限",
+                    },
                 },
                 "required": ["channel", "confirm"],
             },
@@ -438,8 +448,39 @@ def execute_tool(user_id: int, name: str, args: dict):
                 "error": "需要用户明确确认后才能启动投递。请先展示计划并等待用户同意。",
                 "requiresConfirmation": True,
             }
+
+        max_count = args.get("max_count")
+        if max_count is not None:
+            try:
+                max_count = max(1, min(int(max_count), 100))
+            except (TypeError, ValueError):
+                max_count = None
+
+        baseline = None
+        try:
+            stats = _request_json(
+                user_id, "GET", f"{entry.prefix}/stats", timeout=10
+            )
+            baseline = int(((stats.get("kpi") or {}).get("delivered") or 0))
+        except Exception:
+            baseline = None
+
         data = _request_json(user_id, "POST", f"{entry.prefix}/start")
-        return {"ok": True, "channel": entry.key, "message": data.get("message") or "已启动"}
+
+        session_id = _active_sessions.get(user_id) or watch.latest_session(user_id)
+        watch.start_watch(user_id, entry.key, session_id, baseline, max_count)
+
+        message = data.get("message") or "已启动"
+        if max_count:
+            message = f"已启动，目标 {max_count} 个岗位，达到后会自动停止并主动通知你"
+            if baseline is None:
+                message += "（当前投递数读取失败，数量控制可能不精确）"
+        return {
+            "ok": True,
+            "channel": entry.key,
+            "message": message,
+            "maxCount": max_count,
+        }
 
     if name == "stop_application":
         entry = _channel(args["channel"])
@@ -868,6 +909,7 @@ def run_chat(user_id: int, session_id: str | None, message: str) -> dict:
 
     session_id = session_id or uuid.uuid4().hex
     _save_message(user_id, session_id, "user", message)
+    _remember_session(user_id, session_id)
 
     if PROVIDER == "anthropic":
         return _run_anthropic(user_id, session_id)
@@ -885,6 +927,7 @@ def run_chat_stream(user_id: int, session_id: str | None, message: str):
 
     session_id = session_id or uuid.uuid4().hex
     _save_message(user_id, session_id, "user", message)
+    _remember_session(user_id, session_id)
     yield {"type": "session", "sessionId": session_id}
 
     if PROVIDER == "anthropic":

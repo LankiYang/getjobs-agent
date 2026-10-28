@@ -64,6 +64,11 @@
       try { if (rfb) rfb.disconnect(); } catch (e) {}
       rfb = new RFB(screen, url, { wsProtocols: ['binary'], clipViewport: false, scaleViewport: true, resizeSession: false });
       window.__rfb = rfb;
+      // 省流量：更高压缩、较低画质；表单调填场景足够清晰
+      try {
+        rfb.compressionLevel = 6;
+        rfb.qualityLevel = 4;
+      } catch (e) {}
       rfb.addEventListener('connect', () => {
         overlay.classList.add('hidden');
         setStatus('已连接 · 可以直接操作浏览器');

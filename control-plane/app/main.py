@@ -26,6 +26,7 @@ from . import agent, resume, runners
 from .channels import CHANNELS
 from .config import ALLOWED_ORIGINS
 from .db import get_conn, init_db
+from .events import hub
 from .security import (
     create_ticket,
     create_token,
@@ -45,8 +46,9 @@ app.add_middleware(
 
 
 @app.on_event("startup")
-def _startup() -> None:
+async def _startup() -> None:
     init_db()
+    hub.set_loop(asyncio.get_running_loop())
 
 
 @app.exception_handler(runners.RunnerError)
@@ -538,6 +540,29 @@ def agent_chat_stream(body: ChatRequest, user_id: int = Depends(current_user)):
 @app.get("/api/agent/history")
 def agent_history(session_id: str, user_id: int = Depends(current_user)) -> dict:
     return {"messages": agent.history(user_id, session_id)}
+
+
+@app.get("/api/agent/events/stream")
+async def agent_events(user_id: int = Depends(current_user)):
+    queue = hub.subscribe(user_id)
+
+    async def events():
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=25)
+                except asyncio.TimeoutError:
+                    yield ": ping\n\n"
+                    continue
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        finally:
+            hub.unsubscribe(user_id, queue)
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get("/api/agent/health")

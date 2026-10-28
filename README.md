@@ -47,6 +47,7 @@ Boss直聘 / 猎聘
 | `skill/getjobs/` | Claude Code skill 编排规则 |
 | `vendor/get_jobs/` | 上游源码快照（含多实例补丁，见 [docs/vendor-patches.md](docs/vendor-patches.md)） |
 | `docs/architecture.md` | 多用户架构与演进路线 |
+| `docs/nowcoder-notes.md` | 牛客网申助手插件调研与借鉴点 |
 
 ## 快速开始
 
@@ -159,7 +160,15 @@ cd control-plane
 
 实现：控制面为 runner 启动 x11vnc（仅监听 127.0.0.1），浏览器通过带短期签名 ticket 的 WebSocket 连接；noVNC 资源内置在 `control-plane/static/novnc`。服务器需要安装 `x11vnc`（部署文档和 Docker 镜像已包含）。
 
+**流量**：默认压缩等级 6、画质 4，静止画面实测约 0.2 KB/s；滚动/翻页时只推送变化区域的 JPEG，不会像视频流一样持续占用。关闭接管页即断开；x11vnc 在无客户端 10 分钟后自动退出。
+
 > 安全提示：当前 VNC 未设密码，依赖「仅本机监听 + ticket 鉴权 + 每用户 runner 隔离」。对外部署建议再加 VNC 密码、访问频率限制和审计。
+
+## 投递数量上限与主动通知
+
+- 对话里说「投 3 个岗位」时，agent 会给 `start_application` 传 `max_count=3`；后台每 4 秒检查一次，达到数量后自动停止（可能因投递中任务多出 1 个）
+- 投递结束、达到目标或超过 2 小时，控制面会写一条总结消息并通过 SSE 实时推送到网页；不在对话页时「对话」标签会出现红点
+- 总结包含本轮新增成功数、累计状态和最近投递的公司/岗位
 
 ## 看板
 

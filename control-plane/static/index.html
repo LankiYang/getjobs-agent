@@ -160,6 +160,10 @@
   }
   .tab:hover { color: var(--ink); }
   .tab.active { color: var(--ink); border-bottom-color: var(--seal); }
+  .tab-badge {
+    display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--seal); margin-left: 5px; vertical-align: 2px;
+  }
   .linkish {
     background: none; border: none; color: var(--muted); font-size: 13px;
     padding: 4px 0; border-bottom: 1px solid transparent;
@@ -571,7 +575,7 @@
     <div class="stamp" aria-hidden="true">投</div>
     <h1 class="brand-title">投递台账</h1>
     <div class="view-tabs">
-      <button id="tabChat" class="tab active" type="button">对话</button>
+      <button id="tabChat" class="tab active" type="button">对话<span id="chatBadge" class="tab-badge hidden"></span></button>
       <button id="tabDash" class="tab" type="button">看板</button>
     </div>
     <span id="who" class="who"></span>
@@ -811,6 +815,7 @@ const state = {
   dashKeyword: '',
   bossLoggedIn: false,
   qrPoll: null,
+  eventAbort: null,
 };
 if (window.marked) marked.setOptions({ gfm: true, breaks: true });
 const $ = (id) => document.getElementById(id);
@@ -841,6 +846,10 @@ function logout() {
   stopQrPolling();
   setBossLoggedIn(false);
   show('qrModal', false);
+  if (state.eventAbort) {
+    try { state.eventAbort.abort(); } catch (e) {}
+    state.eventAbort = null;
+  }
   if (state.sessionKey) localStorage.removeItem(state.sessionKey);
   localStorage.removeItem('getjobs_session');
   state.token = ''; state.user = null; state.sessionId = ''; state.sessionKey = '';
@@ -903,6 +912,7 @@ async function loadMe() {
     state.runnerRunning ? loadStats() : Promise.resolve(),
   ]);
   await loadHistory();
+  startEventStream();
 }
 
 async function loadHistory() {
@@ -923,6 +933,49 @@ async function loadHistory() {
     const chat = $('chat');
     chat.scrollTop = chat.scrollHeight;
   } catch (e) { /* ignore */ }
+}
+
+function handleAgentEvent(ev) {
+  if (!ev || ev.type !== 'agent_message') return;
+  if (!state.sessionId && ev.sessionId) saveSession(ev.sessionId);
+  addMessage('agent', ev.message || '');
+  if (state.view !== 'chat') $('chatBadge').classList.remove('hidden');
+  if (state.runnerRunning) loadStats();
+  if (state.view === 'dash') loadDashboard();
+}
+
+async function startEventStream() {
+  if (state.eventAbort || !state.token) return;
+  state.eventAbort = new AbortController();
+  try {
+    const res = await fetch('/api/agent/events/stream', {
+      headers: {
+        'Authorization': 'Bearer ' + state.token,
+        'Accept': 'text/event-stream',
+      },
+      signal: state.eventAbort.signal,
+    });
+    if (!res.ok) throw new Error('events ' + res.status);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let index;
+      while ((index = buffer.indexOf('\n\n')) >= 0) {
+        const chunk = buffer.slice(0, index);
+        buffer = buffer.slice(index + 2);
+        for (const line of chunk.split('\n')) {
+          if (!line.startsWith('data:')) continue;
+          try { handleAgentEvent(JSON.parse(line.slice(5).trim())); } catch (e) {}
+        }
+      }
+    }
+  } catch (e) { /* reconnect */ }
+  state.eventAbort = null;
+  if (state.token) setTimeout(startEventStream, 5000);
 }
 
 function setRunnerState(running, port) {
@@ -1006,6 +1059,7 @@ function switchView(view) {
   show('viewDash', view === 'dash');
   $('tabChat').classList.toggle('active', view === 'chat');
   $('tabDash').classList.toggle('active', view === 'dash');
+  if (view === 'chat') $('chatBadge').classList.add('hidden');
   if (view === 'dash') loadDashboard();
 }
 
