@@ -150,6 +150,14 @@
   .topbar .who {
     margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--muted);
   }
+  .view-tabs { display: flex; gap: 18px; margin-left: 10px; }
+  .tab {
+    background: none; border: none; padding: 6px 0;
+    font-size: 14px; color: var(--muted);
+    border-bottom: 2px solid transparent;
+  }
+  .tab:hover { color: var(--ink); }
+  .tab.active { color: var(--ink); border-bottom-color: var(--seal); }
   .linkish {
     background: none; border: none; color: var(--muted); font-size: 13px;
     padding: 4px 0; border-bottom: 1px solid transparent;
@@ -197,6 +205,7 @@
   .ledger .lbl { font-size: 11px; color: var(--muted); margin-top: 6px; }
 
   .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   .chat {
     flex: 1; min-height: 0; overflow-y: auto; padding: 30px clamp(18px, 4vw, 56px) 24px;
     display: flex; flex-direction: column; gap: 22px;
@@ -382,6 +391,91 @@
   .qr-frame img { width: 240px; height: 240px; object-fit: contain; display: block; }
   .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
 
+  /* ---------- dashboard ---------- */
+  .dash-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 26px clamp(18px, 4vw, 56px) 34px; }
+  .dash-empty { text-align: center; padding: 90px 20px; }
+  .dash-empty h2 { font-family: var(--serif); font-size: 24px; margin: 0 0 10px; }
+  .dash-empty p { color: var(--muted); font-size: 14px; margin: 0 0 20px; }
+  .dash-kpis {
+    display: grid; grid-template-columns: repeat(5, 1fr);
+    border: 1px solid var(--line); background: rgba(250,250,246,.5);
+  }
+  .kpi { padding: 16px 18px; border-right: 1px solid var(--line); }
+  .kpi:last-child { border-right: none; }
+  .kpi-num { font-family: var(--serif); font-size: 30px; line-height: 1.1; }
+  .kpi-num.seal { color: var(--seal); }
+  .kpi-num.muted { color: var(--muted); }
+  .kpi-label { font-size: 11.5px; color: var(--muted); margin-top: 6px; }
+  .dash-panels { display: grid; grid-template-columns: 1fr 1.25fr; gap: 18px; margin-top: 18px; }
+  .dash-panel {
+    border: 1px solid var(--line); padding: 16px 18px;
+    background: rgba(250,250,246,.45);
+  }
+  .dash-panel h3 { font-family: var(--serif); font-size: 15px; margin: 0 0 14px; font-weight: 700; }
+  .bars .bar-row {
+    display: grid; grid-template-columns: 84px 1fr 40px; gap: 10px;
+    align-items: center; margin: 9px 0; font-size: 12.5px; color: var(--ink-soft);
+  }
+  .bar-track { height: 9px; background: #e7e6dd; position: relative; }
+  .bar-fill { position: absolute; inset: 0 auto 0 0; background: var(--seal); opacity: .8; }
+  .bar-fill.st-delivered { background: var(--green); }
+  .bar-fill.st-filtered { background: var(--line-strong); }
+  .bar-fill.st-failed { background: var(--seal); }
+  .bar-fill.st-pending { background: var(--amber); }
+  .trend { display: flex; align-items: stretch; gap: 6px; height: 170px; justify-content: space-between; }
+  .trend .col { flex: 0 1 46px; min-width: 18px; display: flex; flex-direction: column; }
+  .trend .track { flex: 1; display: flex; align-items: flex-end; }
+  .trend .bar { width: 100%; background: var(--green); opacity: .72; min-height: 2px; }
+  .trend .lbl {
+    font-family: var(--mono); font-size: 9px; color: var(--muted);
+    text-align: center; margin-top: 6px; white-space: nowrap;
+  }
+  .table-panel { margin-top: 18px; }
+  .table-head {
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 12px; flex-wrap: wrap; margin-bottom: 10px;
+  }
+  .table-head h3 { margin: 0; }
+  .filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .filters select, .filters input {
+    background: transparent; border: 1px solid var(--line-strong); border-radius: 2px;
+    padding: 7px 9px; font: inherit; font-size: 12.5px; color: var(--ink);
+  }
+  .filters input { width: 180px; }
+  .filters select:focus, .filters input:focus { outline: none; border-color: var(--ink); }
+  .table-wrap { overflow-x: auto; }
+  .ledger-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .ledger-table th {
+    text-align: left; font-weight: 600; font-size: 11.5px; color: var(--muted);
+    border-bottom: 1px solid var(--line-strong); padding: 8px 10px; white-space: nowrap;
+  }
+  .ledger-table td { padding: 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .ledger-table tbody tr:hover { background: rgba(250,250,246,.7); }
+  .job-link { color: var(--ink); text-decoration: none; border-bottom: 1px dashed var(--line-strong); }
+  .job-link:hover { color: var(--seal); border-color: var(--seal); }
+  .status {
+    display: inline-block; font-size: 11.5px; padding: 2px 8px;
+    border: 1px solid; border-radius: 2px; white-space: nowrap;
+  }
+  .status.st-delivered { color: var(--green); border-color: #bfd0c6; background: rgba(47,79,67,.06); }
+  .status.st-filtered { color: var(--muted); border-color: var(--line); }
+  .status.st-failed { color: var(--seal); border-color: #e3c8c2; background: var(--seal-soft); }
+  .status.st-pending { color: var(--amber); border-color: #e0d3b8; }
+  .pager { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; }
+  .pager-btns { display: flex; gap: 8px; }
+
+  @media (max-width: 860px) {
+    .dash-scroll { padding: 18px 18px 28px; }
+    .dash-kpis { grid-template-columns: repeat(2, 1fr); }
+    .kpi { border-right: none; border-bottom: 1px solid var(--line); }
+    .kpi:nth-child(odd) { border-right: 1px solid var(--line); }
+    .kpi:last-child { border-bottom: none; }
+    .dash-panels { grid-template-columns: 1fr; }
+    .col-salary, .col-city { display: none; }
+    .view-tabs { margin-left: 0; }
+    .topbar { flex-wrap: wrap; gap: 8px 14px; }
+  }
+
   @media (max-width: 860px) {
     .auth-screen { grid-template-columns: 1fr; }
     .auth-lede { padding: 56px 28px 20px; border-right: none; }
@@ -452,6 +546,10 @@
   <header class="topbar">
     <div class="stamp" aria-hidden="true">投</div>
     <h1 class="brand-title">投递台账</h1>
+    <div class="view-tabs">
+      <button id="tabChat" class="tab active" type="button">对话</button>
+      <button id="tabDash" class="tab" type="button">看板</button>
+    </div>
     <span id="who" class="who"></span>
     <button id="newChatBtn" class="linkish">新对话</button>
     <button id="logoutBtn" class="linkish">退出</button>
@@ -495,6 +593,7 @@
     </aside>
 
     <main class="main">
+      <div id="viewChat" class="view">
       <div id="chat" class="chat">
         <div id="empty" class="empty">
           <h2>说一句你想投的方向，<br />剩下的交给台账。</h2>
@@ -511,6 +610,74 @@
         <textarea id="input" rows="1" placeholder="例如：帮我投大模型方向，城市上海"></textarea>
         <button id="sendBtn" class="btn" type="submit">发送</button>
       </form>
+      </div>
+
+      <div id="viewDash" class="view hidden">
+        <div class="dash-scroll">
+          <div id="dashEmpty" class="dash-empty hidden">
+            <h2>还没有运行环境</h2>
+            <p>启动运行环境后，这里会记录每一次投递。</p>
+            <button id="dashStart" class="btn tiny" type="button">启动运行环境</button>
+          </div>
+
+          <div id="dashBody">
+            <section class="dash-kpis">
+              <div class="kpi"><div id="kpiTotal" class="kpi-num">—</div><div class="kpi-label">总记录</div></div>
+              <div class="kpi"><div id="kpiDelivered" class="kpi-num seal">—</div><div class="kpi-label">已投递</div></div>
+              <div class="kpi"><div id="kpiFiltered" class="kpi-num muted">—</div><div class="kpi-label">已过滤</div></div>
+              <div class="kpi"><div id="kpiPending" class="kpi-num">—</div><div class="kpi-label">待处理</div></div>
+              <div class="kpi"><div id="kpiSalary" class="kpi-num">—</div><div class="kpi-label">平均薪资</div></div>
+            </section>
+
+            <section class="dash-panels">
+              <div class="dash-panel">
+                <h3>状态分布</h3>
+                <div id="statusChart" class="bars"></div>
+              </div>
+              <div class="dash-panel">
+                <h3>近 14 天记录</h3>
+                <div id="trendChart" class="trend"></div>
+              </div>
+            </section>
+
+            <section class="dash-panel table-panel">
+              <div class="table-head">
+                <h3>投递记录</h3>
+                <div class="filters">
+                  <select id="statusFilter">
+                    <option value="">全部状态</option>
+                    <option value="已投递">已投递</option>
+                    <option value="已过滤">已过滤</option>
+                    <option value="未投递">未投递</option>
+                    <option value="投递失败">投递失败</option>
+                  </select>
+                  <input id="keywordFilter" placeholder="搜索公司 / 岗位" />
+                  <button id="refreshDash" class="btn ghost tiny" type="button">刷新</button>
+                </div>
+              </div>
+              <div class="table-wrap">
+                <table class="ledger-table">
+                  <thead>
+                    <tr>
+                      <th>公司</th><th>岗位</th><th class="col-salary">薪资</th>
+                      <th class="col-city">城市</th><th>状态</th><th>记录时间</th>
+                    </tr>
+                  </thead>
+                  <tbody id="jobRows"></tbody>
+                </table>
+                <div id="tableEmpty" class="mini-hint hidden" style="padding:18px 10px">暂无记录</div>
+              </div>
+              <div class="pager">
+                <span id="pageInfo" class="mini-hint"></span>
+                <div class="pager-btns">
+                  <button id="prevPage" class="btn ghost tiny" type="button">上一页</button>
+                  <button id="nextPage" class="btn ghost tiny" type="button">下一页</button>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
     </main>
   </div>
 </div>
@@ -598,6 +765,11 @@ const state = {
   sessionKey: '',
   busy: false,
   runnerRunning: false,
+  view: 'chat',
+  dashPage: 1,
+  dashSize: 10,
+  dashStatus: '',
+  dashKeyword: '',
 };
 if (window.marked) marked.setOptions({ gfm: true, breaks: true });
 const $ = (id) => document.getElementById(id);
@@ -721,14 +893,185 @@ function setRunnerState(running, port) {
     $('statsTotal').textContent = '—';
     $('statsDelivered').textContent = '—';
     $('statsFiltered').textContent = '—';
+    if (state.view === 'dash') {
+      show('dashEmpty', true);
+      show('dashBody', false);
+    }
   }
 }
 
 async function loadRunner() {
   try {
+    const wasRunning = state.runnerRunning;
     const data = await api('/api/me/runner');
     setRunnerState(!!data.running, data.port);
+    if (state.view === 'dash' && !wasRunning && state.runnerRunning) loadDashboard();
   } catch (e) { /* ignore */ }
+}
+
+function switchView(view) {
+  state.view = view;
+  show('viewChat', view === 'chat');
+  show('viewDash', view === 'dash');
+  $('tabChat').classList.toggle('active', view === 'chat');
+  $('tabDash').classList.toggle('active', view === 'dash');
+  if (view === 'dash') loadDashboard();
+}
+
+async function loadDashboard() {
+  if (!state.runnerRunning) {
+    show('dashEmpty', true);
+    show('dashBody', false);
+    return;
+  }
+  show('dashEmpty', false);
+  show('dashBody', true);
+  await Promise.all([loadDashStats(), loadDashList()]);
+}
+
+async function loadDashStats() {
+  try {
+    const stats = await api('/api/channels/boss/stats');
+    const kpi = stats.kpi || {};
+    $('kpiTotal').textContent = kpi.total ?? 0;
+    $('kpiDelivered').textContent = kpi.delivered ?? 0;
+    $('kpiFiltered').textContent = kpi.filtered ?? 0;
+    $('kpiPending').textContent = (kpi.pending ?? 0) + (kpi.failed ?? 0);
+    $('kpiSalary').textContent = kpi.avgMonthlyK ? kpi.avgMonthlyK + 'K' : '—';
+    $('statsTotal').textContent = kpi.total ?? 0;
+    $('statsDelivered').textContent = kpi.delivered ?? 0;
+    $('statsFiltered').textContent = kpi.filtered ?? 0;
+    renderStatusChart((stats.charts && stats.charts.byStatus) || [], kpi.total || 0);
+    renderTrend((stats.charts && stats.charts.dailyTrend) || []);
+  } catch (e) {
+    $('statusChart').innerHTML = '<span class="mini-hint">' + e.message + '</span>';
+    $('trendChart').innerHTML = '';
+  }
+}
+
+function statusClass(status) {
+  return ({
+    '已投递': 'st-delivered',
+    '已过滤': 'st-filtered',
+    '投递失败': 'st-failed',
+    '未投递': 'st-pending',
+  })[status] || '';
+}
+
+function renderStatusChart(rows, total) {
+  const box = $('statusChart');
+  box.innerHTML = '';
+  if (!rows.length) {
+    box.innerHTML = '<span class="mini-hint">暂无数据</span>';
+    return;
+  }
+  rows.slice().sort((a, b) => b.value - a.value).forEach(row => {
+    const el = document.createElement('div');
+    el.className = 'bar-row';
+    const label = document.createElement('span');
+    label.textContent = row.name || '未知';
+    const track = document.createElement('span');
+    track.className = 'bar-track';
+    const fill = document.createElement('span');
+    fill.className = 'bar-fill ' + statusClass(row.name);
+    fill.style.width = (total ? Math.max(3, Math.round(row.value / total * 100)) : 0) + '%';
+    track.appendChild(fill);
+    const value = document.createElement('span');
+    value.textContent = row.value;
+    el.append(label, track, value);
+    box.appendChild(el);
+  });
+}
+
+function renderTrend(rows) {
+  const box = $('trendChart');
+  box.innerHTML = '';
+  if (!rows.length) {
+    box.innerHTML = '<span class="mini-hint">暂无数据</span>';
+    return;
+  }
+  const last = rows.slice(-14);
+  const max = Math.max.apply(null, last.map(r => r.value).concat([1]));
+  last.forEach(row => {
+    const col = document.createElement('div');
+    col.className = 'col';
+    col.title = (row.name || '') + '：' + row.value + ' 条';
+    const track = document.createElement('div');
+    track.className = 'track';
+    const bar = document.createElement('div');
+    bar.className = 'bar';
+    bar.style.height = Math.max(2, Math.round(row.value / max * 100)) + '%';
+    track.appendChild(bar);
+    const label = document.createElement('div');
+    label.className = 'lbl';
+    label.textContent = (row.name || '').slice(5);
+    col.append(track, label);
+    box.appendChild(col);
+  });
+}
+
+async function loadDashList() {
+  try {
+    const params = new URLSearchParams({ page: state.dashPage, size: state.dashSize });
+    if (state.dashStatus) params.set('statuses', state.dashStatus);
+    if (state.dashKeyword) params.set('keyword', state.dashKeyword);
+    const data = await api('/api/channels/boss/list?' + params.toString());
+    renderJobRows(data.items || []);
+    const total = data.total || 0;
+    const pages = Math.max(1, Math.ceil(total / state.dashSize));
+    $('pageInfo').textContent = total
+      ? (total + ' 条 · 第 ' + data.page + ' / ' + pages + ' 页')
+      : '';
+    $('prevPage').disabled = state.dashPage <= 1;
+    $('nextPage').disabled = state.dashPage >= pages;
+    $('nextPage').dataset.pages = pages;
+  } catch (e) {
+    renderJobRows([]);
+    $('pageInfo').textContent = e.message;
+  }
+}
+
+function formatTime(value) {
+  if (!value) return '—';
+  return String(value).replace('T', ' ').slice(5, 16);
+}
+
+function renderJobRows(items) {
+  const tbody = $('jobRows');
+  tbody.innerHTML = '';
+  show('tableEmpty', !items.length);
+  items.forEach(job => {
+    const tr = document.createElement('tr');
+    const company = document.createElement('td');
+    company.textContent = job.companyName || '—';
+    const jobCell = document.createElement('td');
+    if (job.jobUrl) {
+      const a = document.createElement('a');
+      a.href = job.jobUrl;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.className = 'job-link';
+      a.textContent = job.jobName || '—';
+      jobCell.appendChild(a);
+    } else {
+      jobCell.textContent = job.jobName || '—';
+    }
+    const salary = document.createElement('td');
+    salary.className = 'col-salary';
+    salary.textContent = job.salary || '—';
+    const city = document.createElement('td');
+    city.className = 'col-city';
+    city.textContent = job.location || '—';
+    const status = document.createElement('td');
+    const badge = document.createElement('span');
+    badge.className = 'status ' + statusClass(job.deliveryStatus);
+    badge.textContent = job.deliveryStatus || '未知';
+    status.appendChild(badge);
+    const time = document.createElement('td');
+    time.textContent = formatTime(job.createdAt || job.updatedAt);
+    tr.append(company, jobCell, salary, city, status, time);
+    tbody.appendChild(tr);
+  });
 }
 
 async function loadChannels() {
@@ -1124,6 +1467,29 @@ function bind() {
   $('registerBtn').onclick = () => submitAuth('/api/auth/register');
   $('password').addEventListener('keydown', e => { if (e.key === 'Enter') submitAuth('/api/auth/login'); });
   $('logoutBtn').onclick = logout;
+  $('tabChat').onclick = () => switchView('chat');
+  $('tabDash').onclick = () => switchView('dash');
+  $('dashStart').onclick = () => startRunner();
+  $('refreshDash').onclick = () => loadDashboard();
+  $('statusFilter').onchange = (e) => {
+    state.dashStatus = e.target.value;
+    state.dashPage = 1;
+    loadDashList();
+  };
+  $('keywordFilter').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      state.dashKeyword = e.target.value.trim();
+      state.dashPage = 1;
+      loadDashList();
+    }
+  });
+  $('prevPage').onclick = () => {
+    if (state.dashPage > 1) { state.dashPage--; loadDashList(); }
+  };
+  $('nextPage').onclick = () => {
+    const pages = Number($('nextPage').dataset.pages || 1);
+    if (state.dashPage < pages) { state.dashPage++; loadDashList(); }
+  };
   $('newChatBtn').onclick = () => {
     if (state.sessionKey) localStorage.removeItem(state.sessionKey);
     state.sessionId = '';
