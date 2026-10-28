@@ -8,6 +8,11 @@ profile.json
 boss-login-qr.png
 .env
 
+# Control plane runtime
+control-plane/control.db
+control-plane/jwt.secret
+runners/
+
 # Vendor runtime artifacts (upstream .gitignore also covers these)
 vendor/get_jobs/build/
 vendor/get_jobs/db/
