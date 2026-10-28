@@ -130,6 +130,8 @@
   }
   .btn.ghost { background: transparent; color: var(--ink); border-color: var(--line-strong); }
   .btn.ghost:hover { border-color: var(--ink); background: transparent; }
+  .btn.logged { border-color: var(--green); color: var(--green); background: transparent; }
+  .btn.logged:hover { border-color: var(--green); color: var(--green); }
   .btn.tiny { padding: 8px 12px; font-size: 13px; }
   .auth-actions .btn { flex: 1; }
   .error {
@@ -770,6 +772,8 @@ const state = {
   dashSize: 10,
   dashStatus: '',
   dashKeyword: '',
+  bossLoggedIn: false,
+  qrPoll: null,
 };
 if (window.marked) marked.setOptions({ gfm: true, breaks: true });
 const $ = (id) => document.getElementById(id);
@@ -797,6 +801,9 @@ async function api(path, options = {}) {
 }
 
 function logout() {
+  stopQrPolling();
+  setBossLoggedIn(false);
+  show('qrModal', false);
   if (state.sessionKey) localStorage.removeItem(state.sessionKey);
   localStorage.removeItem('getjobs_session');
   state.token = ''; state.user = null; state.sessionId = ''; state.sessionKey = '';
@@ -905,8 +912,58 @@ async function loadRunner() {
     const wasRunning = state.runnerRunning;
     const data = await api('/api/me/runner');
     setRunnerState(!!data.running, data.port);
+    if (state.runnerRunning) {
+      loadBossStatus();
+    } else {
+      setBossLoggedIn(false);
+    }
     if (state.view === 'dash' && !wasRunning && state.runnerRunning) loadDashboard();
   } catch (e) { /* ignore */ }
+}
+
+function setBossLoggedIn(loggedIn) {
+  state.bossLoggedIn = loggedIn;
+  const btn = $('loginBoss');
+  btn.textContent = loggedIn ? 'Boss 已登录' : 'Boss 扫码登录';
+  btn.classList.toggle('logged', loggedIn);
+}
+
+async function loadBossStatus() {
+  if (!state.runnerRunning) {
+    setBossLoggedIn(false);
+    return null;
+  }
+  try {
+    const data = await api('/api/channels/boss/status');
+    setBossLoggedIn(!!data.isLoggedIn);
+    return data;
+  } catch (e) {
+    return null;
+  }
+}
+
+function startQrPolling() {
+  stopQrPolling();
+  state.qrPoll = setInterval(async () => {
+    const data = await loadBossStatus();
+    if (!data) return;
+    if (data.isLoggedIn) {
+      stopQrPolling();
+      show('qrModal', false);
+      addMessage('system', 'Boss 已登录');
+      if (state.view === 'dash') loadDashboard();
+      else loadStats();
+    } else if (data.loginState === 'qr_expired') {
+      setError('qrError', '二维码已过期，点「刷新」重新获取');
+    }
+  }, 2000);
+}
+
+function stopQrPolling() {
+  if (state.qrPoll) {
+    clearInterval(state.qrPoll);
+    state.qrPoll = null;
+  }
 }
 
 function switchView(view) {
@@ -1276,7 +1333,12 @@ async function sendMessage() {
 
 async function openQr() {
   try {
-    await api('/api/channels/boss/login', { method: 'POST' });
+    const data = await api('/api/channels/boss/login', { method: 'POST' });
+    if (data && data.loggedIn) {
+      setBossLoggedIn(true);
+      addMessage('system', 'Boss 已登录');
+      return;
+    }
     await showQr('/api/channels/boss/login/qr');
   } catch (e) { addMessage('system', '打开登录页失败：' + e.message); }
 }
@@ -1285,6 +1347,7 @@ async function showQr(url) {
   show('qrModal', true);
   setError('qrError', '');
   $('qrImg').removeAttribute('src');
+  startQrPolling();
   try {
     const res = await fetch(url, { headers: { 'Authorization': 'Bearer ' + state.token } });
     if (!res.ok) throw new Error('二维码获取失败 ' + res.status);
@@ -1505,8 +1568,8 @@ function bind() {
   $('uploadResume').onclick = () => $('resumeFile').click();
   $('resumeFile').onchange = (e) => uploadResume(e.target.files[0]);
   $('addBlacklist').onclick = addBlacklist;
-  $('closeQr').onclick = () => show('qrModal', false);
-  $('refreshQr').onclick = () => showQr('/api/channels/boss/login/qr');
+  $('closeQr').onclick = () => { stopQrPolling(); show('qrModal', false); };
+  $('refreshQr').onclick = () => openQr();
 
   $('composer').addEventListener('submit', e => { e.preventDefault(); sendMessage(); });
   $('input').addEventListener('keydown', e => {
