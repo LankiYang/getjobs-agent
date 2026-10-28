@@ -60,14 +60,18 @@ STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 @app.get("/")
 def index():
-    return FileResponse(STATIC_DIR / "index.html")
+    return FileResponse(
+        STATIC_DIR / "index.html", headers={"Cache-Control": "no-store"}
+    )
 
 
 @app.post("/api/auth/register")
 def register(body: Credentials) -> dict:
     email = body.email.strip().lower()
-    if "@" not in email or len(body.password) < 8:
-        raise HTTPException(400, "邮箱格式不正确或密码少于 8 位")
+    if "@" not in email or "." not in email.split("@")[-1]:
+        raise HTTPException(400, "邮箱格式不正确")
+    if len(body.password) < 8:
+        raise HTTPException(400, "密码至少 8 位")
     with get_conn() as conn:
         exists = conn.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
         if exists:
