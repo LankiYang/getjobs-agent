@@ -1,0 +1,17 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Local state
+profile.json
+boss-login-qr.png
+.env
+
+# Vendor runtime artifacts (upstream .gitignore also covers these)
+vendor/get_jobs/build/
+vendor/get_jobs/db/
+vendor/get_jobs/target/
+vendor/get_jobs/browser-data/
+vendor/get_jobs/.gradle/
+vendor/get_jobs/src/main/resources/dist/
