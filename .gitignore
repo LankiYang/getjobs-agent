@@ -11,6 +11,7 @@ boss-login-qr.png
 # Control plane runtime
 control-plane/control.db
 control-plane/jwt.secret
+control-plane/data/
 runners/
 
 # Vendor runtime artifacts (upstream .gitignore also covers these)

@@ -396,6 +396,8 @@
     outline: none; border-color: var(--ink);
   }
   .settings-section textarea + h4 { margin-top: 14px; }
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+  @media (max-width: 860px) { .form-grid { grid-template-columns: 1fr; } }
   .settings-actions {
     display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 10px;
   }
@@ -790,6 +792,37 @@
   <div class="modal-card wide">
     <h3>资料与简历</h3>
     <p class="hint">AI 用这些信息生成打招呼语；图片简历会在投递时自动发送到 Boss。</p>
+
+    <section class="settings-section">
+      <h4>网申资料</h4>
+      <p class="mini-hint" style="margin:-4px 0 10px">用于自动填写网申表单和生成简历，只填真实信息。</p>
+      <div class="form-grid">
+        <div><label class="mini-label" for="pfName">姓名</label><input id="pfName" class="text-input" /></div>
+        <div><label class="mini-label" for="pfPhone">手机</label><input id="pfPhone" class="text-input" /></div>
+        <div><label class="mini-label" for="pfEmail">邮箱</label><input id="pfEmail" class="text-input" /></div>
+        <div><label class="mini-label" for="pfCity">城市</label><input id="pfCity" class="text-input" /></div>
+        <div><label class="mini-label" for="pfTarget">目标岗位</label><input id="pfTarget" class="text-input" /></div>
+        <div><label class="mini-label" for="pfYears">工作年限</label><input id="pfYears" class="text-input" /></div>
+        <div><label class="mini-label" for="pfSalary">期望薪资</label><input id="pfSalary" class="text-input" /></div>
+        <div><label class="mini-label" for="pfDegree">学历</label><input id="pfDegree" class="text-input" /></div>
+        <div><label class="mini-label" for="pfSchool">学校</label><input id="pfSchool" class="text-input" /></div>
+        <div><label class="mini-label" for="pfMajor">专业</label><input id="pfMajor" class="text-input" /></div>
+      </div>
+      <label class="mini-label" for="pfSkills">技能（逗号分隔）</label>
+      <input id="pfSkills" class="text-input" />
+      <label class="mini-label" for="pfWork">工作经历（每行：公司 | 职位 | 时间 | 亮点用分号分隔）</label>
+      <textarea id="pfWork" rows="3"></textarea>
+      <label class="mini-label" for="pfProjects">项目经历（每行：项目 | 角色 | 时间 | 亮点用分号分隔）</label>
+      <textarea id="pfProjects" rows="2"></textarea>
+      <label class="mini-label" for="pfIntro">自我介绍</label>
+      <textarea id="pfIntro" rows="3"></textarea>
+      <div class="settings-actions">
+        <span id="pfHint" class="mini-hint"></span>
+        <a id="resumePdfLink" class="linkish hidden" href="#" target="_blank">下载 PDF 简历</a>
+        <button id="savePf" class="btn ghost tiny" type="button">保存资料</button>
+        <button id="genResume" class="btn tiny" type="button">生成简历</button>
+      </div>
+    </section>
 
     <section class="settings-section">
       <h4>技能介绍</h4>
@@ -1790,11 +1823,121 @@ async function openProfile() {
   hint('aiHint', '');
   hint('behaviorHint', '');
   hint('resumeHint', '');
+  hint('pfHint', '');
+  await loadProfileData();
   if (!state.runnerRunning) {
-    hint('aiHint', '先启动运行环境才能读取资料');
+    hint('aiHint', '启动运行环境后可读取 AI 配置');
+    hint('behaviorHint', '启动运行环境后可读取打招呼设置');
     return;
   }
   await Promise.all([loadAiProfile(), loadBehavior(), loadResumeInfo(), loadBlacklist()]);
+}
+
+function formatExperience(list) {
+  if (!Array.isArray(list)) return '';
+  return list.map(item => {
+    if (typeof item === 'string') return item;
+    const parts = [
+      item.company || '',
+      item.title || '',
+      item.period || '',
+      (item.highlights || []).join('；'),
+    ];
+    return parts.join(' | ');
+  }).join('\n');
+}
+
+function parseExperience(text) {
+  return text.split('\n').map(line => line.trim()).filter(Boolean).map(line => {
+    const parts = line.split('|').map(part => part.trim());
+    return {
+      company: parts[0] || '',
+      title: parts[1] || '',
+      period: parts[2] || '',
+      highlights: (parts[3] || '').split(/[;；]/).map(s => s.trim()).filter(Boolean),
+    };
+  });
+}
+
+async function loadProfileData() {
+  try {
+    const data = await api('/api/profile');
+    const p = data.profile || {};
+    $('pfName').value = p.name || '';
+    $('pfPhone').value = p.phone || '';
+    $('pfEmail').value = p.email || '';
+    $('pfCity').value = p.city || '';
+    $('pfTarget').value = p.target_title || '';
+    $('pfYears').value = p.years_experience || '';
+    $('pfSalary').value = p.expected_salary || '';
+    $('pfDegree').value = p.degree || p.education || '';
+    $('pfSchool').value = p.school || '';
+    $('pfMajor').value = p.major || '';
+    $('pfSkills').value = Array.isArray(p.skills)
+      ? p.skills.join(',')
+      : (p.skills || '');
+    $('pfWork').value = formatExperience(p.work_history);
+    $('pfProjects').value = formatExperience(p.projects);
+    $('pfIntro').value = p.self_intro || '';
+    await loadResumeFileInfo();
+  } catch (e) { hint('pfHint', e.message); }
+}
+
+function collectProfile() {
+  const skills = $('pfSkills').value.split(/[,，]/).map(s => s.trim()).filter(Boolean);
+  return {
+    name: $('pfName').value.trim(),
+    phone: $('pfPhone').value.trim(),
+    email: $('pfEmail').value.trim(),
+    city: $('pfCity').value.trim(),
+    target_title: $('pfTarget').value.trim(),
+    years_experience: $('pfYears').value.trim(),
+    expected_salary: $('pfSalary').value.trim(),
+    degree: $('pfDegree').value.trim(),
+    school: $('pfSchool').value.trim(),
+    major: $('pfMajor').value.trim(),
+    skills,
+    work_history: parseExperience($('pfWork').value),
+    projects: parseExperience($('pfProjects').value),
+    self_intro: $('pfIntro').value.trim(),
+  };
+}
+
+async function saveProfileData(silent) {
+  hint('pfHint', '保存中…');
+  try {
+    await api('/api/profile', {
+      method: 'PUT',
+      body: JSON.stringify(collectProfile()),
+    });
+    if (!silent) hint('pfHint', '已保存');
+    return true;
+  } catch (e) {
+    hint('pfHint', e.message);
+    return false;
+  }
+}
+
+async function loadResumeFileInfo() {
+  try {
+    const info = await api('/api/resume/info');
+    const link = $('resumePdfLink');
+    if (info.exists) link.classList.remove('hidden');
+    else link.classList.add('hidden');
+  } catch (e) { /* ignore */ }
+}
+
+async function generateResume() {
+  if (!(await saveProfileData(true))) return;
+  hint('pfHint', '正在生成简历并同步到投递环境…');
+  try {
+    await api('/api/resume/generate', { method: 'POST' });
+    hint('pfHint', '已生成 PDF 并同步为图片简历');
+    await loadResumeFileInfo();
+    if (state.runnerRunning) await loadResumeInfo();
+  } catch (e) {
+    hint('pfHint', e.message);
+  }
 }
 
 async function loadAiProfile() {
@@ -2007,6 +2150,21 @@ function bind() {
   $('profileBtn').onclick = openProfile;
   $('closeProfile').onclick = () => show('profileModal', false);
   $('saveAi').onclick = saveAiProfile;
+  $('savePf').onclick = () => saveProfileData(false);
+  $('genResume').onclick = generateResume;
+  $('resumePdfLink').onclick = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch('/api/resume/pdf', {
+        headers: { 'Authorization': 'Bearer ' + state.token },
+      });
+      if (!res.ok) throw new Error('下载失败');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank', 'noopener');
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (err) { hint('pfHint', err.message); }
+  };
   $('saveBehavior').onclick = saveBehavior;
   $('uploadResume').onclick = () => $('resumeFile').click();
   $('resumeFile').onchange = (e) => uploadResume(e.target.files[0]);

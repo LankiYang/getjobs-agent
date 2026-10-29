@@ -1,6 +1,7 @@
 """getjobs control plane: auth + per-user isolated runners + channel proxy."""
 
 import asyncio
+import datetime as dt
 import json
 import queue
 import threading
@@ -24,7 +25,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import agent, resume, runners
+from . import agent, resume, resume_service, runners
 from . import sites as site_service
 from .channels import CHANNELS
 from .config import ALLOWED_ORIGINS
@@ -380,6 +381,60 @@ def channel_options(
             user_id, "GET", f"{entry.prefix}/config/options/{option_type}"
         )
     )
+
+
+@app.get("/api/profile")
+def get_profile(user_id: int = Depends(current_user)) -> dict:
+    return {"profile": agent.profile_data(user_id)}
+
+
+@app.put("/api/profile")
+async def update_profile(request: Request, user_id: int = Depends(current_user)) -> dict:
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(400, "参数格式不正确")
+    return {"profile": agent.save_profile_data(user_id, payload)}
+
+
+@app.post("/api/resume/generate")
+def generate_resume_endpoint(user_id: int = Depends(current_user)) -> dict:
+    profile = agent.profile_data(user_id)
+    try:
+        return resume_service.generate(user_id, profile)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except runners.RunnerError as exc:
+        raise HTTPException(503, exc.message) from exc
+    except Exception as exc:
+        raise HTTPException(500, f"生成简历失败: {exc}") from exc
+
+
+@app.get("/api/resume/pdf")
+def download_resume_pdf(user_id: int = Depends(current_user)):
+    path = resume_service.pdf_path(user_id)
+    if not path.is_file():
+        raise HTTPException(404, "还没有生成简历")
+    return FileResponse(
+        path,
+        media_type="application/pdf",
+        filename="resume.pdf",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/api/resume/info")
+def resume_info(user_id: int = Depends(current_user)) -> dict:
+    path = resume_service.pdf_path(user_id)
+    if not path.is_file():
+        return {"exists": False}
+    stat = path.stat()
+    return {
+        "exists": True,
+        "size": stat.st_size,
+        "updatedAt": dt.datetime.fromtimestamp(
+            stat.st_mtime, dt.timezone.utc
+        ).isoformat(timespec="seconds"),
+    }
 
 
 @app.get("/api/ai/config")
