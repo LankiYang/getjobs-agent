@@ -889,6 +889,7 @@ const state = {
   qrPoll: null,
   eventAbort: null,
   authMode: 'login',
+  bossAutoChecked: false,
 };
 if (window.marked) marked.setOptions({ gfm: true, breaks: true });
 const $ = (id) => document.getElementById(id);
@@ -970,6 +971,7 @@ function resetUserUI() {
   setBossLoggedIn(false);
   state.sessionId = '';
   state.sessionKey = '';
+  state.bossAutoChecked = false;
   state.dashPage = 1;
   state.dashStatus = '';
   state.dashKeyword = '';
@@ -1378,6 +1380,25 @@ const CHANNEL_STATE_TEXT = {
   unknown: ['检测失败', 'idle'],
 };
 
+async function checkChannel(key, silent) {
+  const row = document.querySelector('.channel-row[data-key="' + key + '"]');
+  const stateEl = row ? row.querySelector('.chan-state') : null;
+  if (stateEl) stateEl.textContent = '检测中…';
+  try {
+    const res = await api('/api/channels/' + key + '/check', { method: 'POST' });
+    await loadChannels();
+    if (silent) return;
+    if (res.state === 'logged_in') {
+      addMessage('system', '渠道已连接：' + (key === 'boss' ? 'Boss直聘' : key));
+    } else if (res.state === 'not_logged_in' || res.state === 'pending_scan' || res.state === 'qr_expired') {
+      addMessage('system', '该渠道尚未登录，可点「Boss 扫码登录」或「接管浏览器」完成。');
+    }
+  } catch (e) {
+    await loadChannels();
+    if (!silent) addMessage('system', '状态检测失败：' + e.message);
+  }
+}
+
 async function loadChannels() {
   try {
     const data = await api('/api/channels/status');
@@ -1387,6 +1408,7 @@ async function loadChannels() {
     (data.channels || []).forEach(channel => {
       const row = document.createElement('div');
       row.className = 'channel-row';
+      row.dataset.key = channel.key;
       const dot = document.createElement('span');
       const name = document.createElement('span');
       name.className = 'chan-name';
@@ -1401,12 +1423,26 @@ async function loadChannels() {
         dot.className = 'dot ' + (tone === 'ok' ? 'on' : tone);
         state.className = 'chan-state ' + (tone === 'idle' ? '' : tone);
         state.textContent = text;
+        row.style.cursor = 'pointer';
+        row.title = '点击检测状态';
+        row.onclick = () => checkChannel(channel.key);
       }
       row.append(dot, name, state);
       box.appendChild(row);
       if (channel.key === 'boss' && channel.state === 'logged_in') bossLoggedIn = true;
     });
     setBossLoggedIn(bossLoggedIn);
+
+    const boss = (data.channels || []).find(item => item.key === 'boss');
+    if (
+      boss &&
+      boss.state === 'not_checked' &&
+      state.runnerRunning &&
+      !state.bossAutoChecked
+    ) {
+      state.bossAutoChecked = true;
+      checkChannel('boss', true);
+    }
   } catch (e) { /* ignore */ }
 }
 

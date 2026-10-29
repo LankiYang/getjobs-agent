@@ -177,6 +177,23 @@ def _channel_state(data: dict | None) -> str:
     return "not_logged_in"
 
 
+@app.post("/api/channels/{channel}/check")
+def check_channel(channel: str, user_id: int = Depends(current_user)) -> dict:
+    entry = _channel(channel)
+    runner = runners.status(user_id)
+    if not runner.get("running"):
+        raise HTTPException(409, "runner 未运行，请先启动")
+    if channel == "boss":
+        runners.request(
+            user_id, "POST", "/api/offerbuddy/login", timeout=90
+        )
+    response = runners.request(
+        user_id, "GET", f"{entry.prefix}/status", timeout=15
+    )
+    data = response.json() if response.status_code == 200 else None
+    return {"state": _channel_state(data), "detail": data}
+
+
 @app.get("/api/channels/status")
 def channels_status(user_id: int = Depends(current_user)) -> dict:
     runner = runners.status(user_id)
