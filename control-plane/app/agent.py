@@ -26,6 +26,10 @@ MODEL = os.environ.get("AGENT_MODEL", "").strip() or (
 )
 MAX_TOKENS = int(os.environ.get("AGENT_MAX_TOKENS", "4096"))
 MAX_STEPS = int(os.environ.get("AGENT_MAX_STEPS", "40"))
+CONTEXT_TOKEN_BUDGET = int(os.environ.get("AGENT_CONTEXT_TOKENS", "200000"))
+HISTORY_RESERVE_TOKENS = int(os.environ.get("AGENT_HISTORY_RESERVE", "12000"))
+MAX_HISTORY_MESSAGES = int(os.environ.get("AGENT_HISTORY_MAX_MESSAGES", "2000"))
+REQUIRE_CONFIRM = os.environ.get("AGENT_REQUIRE_CONFIRM", "1") != "0"
 
 
 def _step_limit_message(tool_events: list[dict]) -> str:
@@ -34,8 +38,6 @@ def _step_limit_message(tool_events: list[dict]) -> str:
         f"这轮已经执行了 {used} 次工具调用，达到步数上限（{MAX_STEPS} 轮）先暂停。"
         "已经完成的操作会保留；回复「继续」我会接着做，或者告诉我下一步只做哪件事。"
     )
-HISTORY_LIMIT = int(os.environ.get("AGENT_HISTORY_LIMIT", "20"))
-REQUIRE_CONFIRM = os.environ.get("AGENT_REQUIRE_CONFIRM", "1") != "0"
 
 CONFIG_FIELDS = {
     "boss": {
@@ -716,15 +718,40 @@ def execute_tool(user_id: int, name: str, args: dict):
     raise AgentToolError(f"未知工具: {name}")
 
 
+def _estimate_tokens(text: str) -> int:
+    if not text:
+        return 0
+    cjk = sum(1 for char in text if "一" <= char <= "鿿")
+    other = len(text) - cjk
+    return cjk + other // 3 + 1
+
+
+def _history_budget() -> int:
+    return max(4000, CONTEXT_TOKEN_BUDGET - HISTORY_RESERVE_TOKENS)
+
+
 def _load_history(user_id: int, session_id: str) -> list[dict]:
     with get_conn() as conn:
         rows = conn.execute(
             """SELECT role, content FROM agent_messages
                WHERE user_id = ? AND session_id = ?
                ORDER BY id DESC LIMIT ?""",
-            (user_id, session_id, HISTORY_LIMIT),
+            (user_id, session_id, MAX_HISTORY_MESSAGES),
         ).fetchall()
-    return [{"role": row["role"], "content": row["content"]} for row in reversed(rows)]
+
+    budget = _history_budget()
+    used = 0
+    kept: list[dict] = []
+    for row in rows:  # newest first
+        content = row["content"] or ""
+        cost = _estimate_tokens(content)
+        if kept and used + cost > budget:
+            break
+        kept.append({"role": row["role"], "content": content})
+        used += cost
+
+    kept.reverse()
+    return kept
 
 
 def _save_message(user_id: int, session_id: str, role: str, content: str) -> None:
@@ -737,7 +764,14 @@ def _save_message(user_id: int, session_id: str, role: str, content: str) -> Non
 
 
 def history(user_id: int, session_id: str) -> list[dict]:
-    return _load_history(user_id, session_id)
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT role, content FROM agent_messages
+               WHERE user_id = ? AND session_id = ?
+               ORDER BY id DESC LIMIT 200""",
+            (user_id, session_id),
+        ).fetchall()
+    return [{"role": row["role"], "content": row["content"]} for row in reversed(rows)]
 
 
 def _chat_completion(messages: list[dict]) -> dict:
