@@ -1688,6 +1688,8 @@ async function sendMessage() {
       } else if (ev.type === 'text') {
         full += ev.text || '';
         scheduleRender();
+      } else if (ev.type === 'notice') {
+        body.textContent = ev.message || '准备中…';
       } else if (ev.type === 'tool_start') {
         addToolChip(el, ev.name, null);
       } else if (ev.type === 'tool_result') {
@@ -1727,6 +1729,12 @@ async function sendMessage() {
     el.classList.remove('streaming');
     state.busy = false;
     $('sendBtn').disabled = false;
+    loadRunner().then(() => {
+      if (state.runnerRunning) {
+        loadChannels();
+        loadStats();
+      }
+    });
   }
 }
 

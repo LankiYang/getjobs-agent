@@ -273,6 +273,15 @@ def status(user_id: int) -> dict:
     }
 
 
+def ensure_running(user_id: int) -> dict:
+    """按需启动：已运行直接返回，否则拉起并等待健康检查。"""
+    row = _row(user_id)
+    if row and healthy(row):
+        return {"started": False, "status": status(user_id)}
+    result = start(user_id)
+    return {"started": True, "status": result}
+
+
 def display_number(row) -> int:
     return 100 + row["port"] % 1000
 

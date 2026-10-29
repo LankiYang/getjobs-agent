@@ -180,9 +180,10 @@ def _channel_state(data: dict | None) -> str:
 @app.post("/api/channels/{channel}/check")
 def check_channel(channel: str, user_id: int = Depends(current_user)) -> dict:
     entry = _channel(channel)
-    runner = runners.status(user_id)
-    if not runner.get("running"):
-        raise HTTPException(409, "runner 未运行，请先启动")
+    try:
+        runners.ensure_running(user_id)
+    except runners.RunnerError as exc:
+        raise HTTPException(503, exc.message) from exc
     if channel == "boss":
         runners.request(
             user_id, "POST", "/api/offerbuddy/login", timeout=90
@@ -252,11 +253,19 @@ def check_custom_site(site_id: int, user_id: int = Depends(current_user)) -> dic
     site = site_service.get_site(user_id, site_id)
     if not site:
         raise HTTPException(404, "站点不存在")
+    try:
+        runners.ensure_running(user_id)
+    except runners.RunnerError as exc:
+        raise HTTPException(503, exc.message) from exc
     return site_service.check_site(user_id, site)
 
 
 @app.post("/api/browser/takeover")
 def browser_takeover(user_id: int = Depends(current_user)) -> dict:
+    try:
+        runners.ensure_running(user_id)
+    except runners.RunnerError as exc:
+        raise HTTPException(503, exc.message) from exc
     runners.ensure_vnc(user_id)
     ticket = create_ticket(user_id, "vnc", 120)
     return {
@@ -558,7 +567,10 @@ class ChatRequest(BaseModel):
 @app.post("/api/agent/chat")
 def agent_chat(body: ChatRequest, user_id: int = Depends(current_user)) -> dict:
     try:
+        runners.ensure_running(user_id)
         return agent.run_chat(user_id, body.session_id, body.message)
+    except runners.RunnerError as exc:
+        raise HTTPException(503, f"运行环境启动失败：{exc.message}") from exc
     except agent.AgentNotConfigured as exc:
         raise HTTPException(503, str(exc)) from exc
     except httpx.HTTPError as exc:
@@ -568,6 +580,17 @@ def agent_chat(body: ChatRequest, user_id: int = Depends(current_user)) -> dict:
 @app.post("/api/agent/chat/stream")
 async def agent_chat_stream(body: ChatRequest, user_id: int = Depends(current_user)):
     async def events():
+        try:
+            current = await asyncio.to_thread(runners.status, user_id)
+            if not current.get("running"):
+                notice = {"type": "notice", "message": "正在启动运行环境…"}
+                yield f"data: {json.dumps(notice, ensure_ascii=False)}\n\n"
+                await asyncio.to_thread(runners.ensure_running, user_id)
+        except runners.RunnerError as exc:
+            payload = {"type": "error", "message": f"运行环境启动失败：{exc.message}"}
+            yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+            return
+
         results: queue.Queue = queue.Queue()
 
         def worker():
