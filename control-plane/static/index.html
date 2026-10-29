@@ -105,6 +105,17 @@
     font-family: var(--serif); font-size: 24px; margin: 0 0 6px; font-weight: 700;
   }
   .auth-panel .hint { font-size: 13px; color: var(--muted); margin: 0 0 32px; }
+  .auth-tabs {
+    display: flex; gap: 20px; margin: 0 0 22px;
+    border-bottom: 1px solid var(--line);
+  }
+  .auth-tab {
+    background: none; border: none; padding: 8px 0;
+    font-size: 14px; color: var(--muted);
+    border-bottom: 2px solid transparent;
+  }
+  .auth-tab:hover { color: var(--ink); }
+  .auth-tab.active { color: var(--ink); border-bottom-color: var(--seal); }
   .field { margin-bottom: 26px; }
   .field label {
     display: block; font-size: 12px; color: var(--muted); margin-bottom: 8px;
@@ -580,8 +591,12 @@
     </p>
   </section>
   <section class="auth-panel">
-    <h2>进入台账</h2>
-    <p class="hint">登录已有账号，或直接注册一个新账号。</p>
+    <h2 id="authTitle">登录</h2>
+    <p id="authHint" class="hint">使用已有账号登录，继续你的投递台账。</p>
+    <div class="auth-tabs">
+      <button id="modeLogin" class="auth-tab active" type="button">登录</button>
+      <button id="modeRegister" class="auth-tab" type="button">注册</button>
+    </div>
     <div class="field">
       <label for="email">邮箱</label>
       <input id="email" type="email" autocomplete="username" placeholder="you@example.com" />
@@ -590,9 +605,12 @@
       <label for="password">密码</label>
       <input id="password" type="password" autocomplete="current-password" placeholder="至少 8 位" />
     </div>
+    <div id="confirmField" class="field hidden">
+      <label for="password2">确认密码</label>
+      <input id="password2" type="password" autocomplete="new-password" placeholder="再输入一次" />
+    </div>
     <div class="auth-actions">
-      <button id="loginBtn" class="btn">登录</button>
-      <button id="registerBtn" class="btn ghost">注册</button>
+      <button id="submitAuthBtn" class="btn">登录</button>
     </div>
     <div id="authError" class="error" role="alert"></div>
   </section>
@@ -870,6 +888,7 @@ const state = {
   bossLoggedIn: false,
   qrPoll: null,
   eventAbort: null,
+  authMode: 'login',
 };
 if (window.marked) marked.setOptions({ gfm: true, breaks: true });
 const $ = (id) => document.getElementById(id);
@@ -897,18 +916,87 @@ async function api(path, options = {}) {
 }
 
 function logout() {
-  stopQrPolling();
-  setBossLoggedIn(false);
-  show('qrModal', false);
   if (state.eventAbort) {
     try { state.eventAbort.abort(); } catch (e) {}
     state.eventAbort = null;
   }
-  if (state.sessionKey) localStorage.removeItem(state.sessionKey);
-  localStorage.removeItem('getjobs_session');
-  state.token = ''; state.user = null; state.sessionId = ''; state.sessionKey = '';
   localStorage.removeItem('getjobs_token');
-  show('app', false); show('auth', true);
+  localStorage.removeItem('getjobs_session');
+  state.token = '';
+  state.user = null;
+  resetUserUI();
+  $('email').value = '';
+  $('password').value = '';
+  $('password2').value = '';
+  setAuthMode('login');
+  show('app', false);
+  show('auth', true);
+}
+
+function bindSuggestions() {
+  document.querySelectorAll('.suggestion').forEach(btn => {
+    btn.onclick = () => {
+      $('input').value = btn.dataset.text || '';
+      $('input').focus();
+    };
+  });
+}
+
+function resetChat() {
+  const chat = $('chat');
+  chat.innerHTML = '';
+  const empty = document.createElement('div');
+  empty.id = 'empty';
+  empty.className = 'empty';
+  empty.innerHTML = `
+    <h2>说一句你想投的方向，<br />剩下的交给台账。</h2>
+    <p>代理会补齐城市、薪资和经验条件，先给你过目，再开始打招呼。你随时可以叫停。</p>
+    <div class="suggestions">
+      <button class="suggestion" data-text="帮我投大模型方向，城市上海">投大模型方向 · 上海</button>
+      <button class="suggestion" data-text="看看我现在的 Boss 投递配置">看看当前配置</button>
+      <button class="suggestion" data-text="打开 Boss 登录二维码">打开登录二维码</button>
+    </div>`;
+  chat.appendChild(empty);
+  bindSuggestions();
+}
+
+function resetUserUI() {
+  stopQrPolling();
+  show('qrModal', false);
+  show('takeoverModal', false);
+  if ($('takeoverFrame')) $('takeoverFrame').src = 'about:blank';
+  $('profileModal').classList.add('hidden');
+  $('siteModal').classList.add('hidden');
+  setBossLoggedIn(false);
+  state.sessionId = '';
+  state.sessionKey = '';
+  state.dashPage = 1;
+  state.dashStatus = '';
+  state.dashKeyword = '';
+  $('statusFilter').value = '';
+  $('keywordFilter').value = '';
+  $('statsTotal').textContent = '—';
+  $('statsDelivered').textContent = '—';
+  $('statsFiltered').textContent = '—';
+  $('channels').innerHTML = '';
+  $('sites').innerHTML = '<span class="mini-hint">加载中…</span>';
+  resetChat();
+  switchView('chat');
+}
+
+function setAuthMode(mode) {
+  state.authMode = mode;
+  const register = mode === 'register';
+  $('modeLogin').classList.toggle('active', !register);
+  $('modeRegister').classList.toggle('active', register);
+  $('confirmField').classList.toggle('hidden', !register);
+  $('submitAuthBtn').textContent = register ? '创建账号' : '登录';
+  $('authTitle').textContent = register ? '创建账号' : '登录';
+  $('authHint').textContent = register
+    ? '第一次使用？注册后即可创建你的独立投递环境。'
+    : '使用已有账号登录，继续你的投递台账。';
+  $('password').setAttribute('autocomplete', register ? 'new-password' : 'current-password');
+  setError('authError', '');
 }
 
 function saveSession(id) {
@@ -959,6 +1047,12 @@ async function loadMe() {
       saveSession(legacy);
       localStorage.removeItem('getjobs_session');
     }
+  }
+  if (!state.sessionId) {
+    try {
+      const latest = await api('/api/agent/latest-session');
+      if (latest.sessionId) saveSession(latest.sessionId);
+    } catch (e) { /* ignore */ }
   }
   await loadRunner();
   await Promise.all([
@@ -1796,24 +1890,38 @@ async function addBlacklist() {
 }
 
 function bind() {
-  const submitAuth = async (path) => {
+  const submitAuth = async () => {
     setError('authError', '');
+    const register = state.authMode === 'register';
+    const email = $('email').value.trim();
+    const password = $('password').value;
+    if (!email || !password) {
+      setError('authError', '请填写邮箱和密码');
+      return;
+    }
+    if (register && password !== $('password2').value) {
+      setError('authError', '两次输入的密码不一致');
+      return;
+    }
     try {
-      const data = await api(path, {
+      const data = await api(register ? '/api/auth/register' : '/api/auth/login', {
         method: 'POST',
-        body: JSON.stringify({ email: $('email').value, password: $('password').value }),
+        body: JSON.stringify({ email, password }),
       });
       state.token = data.token;
       localStorage.setItem('getjobs_token', data.token);
+      resetUserUI();
       show('auth', false);
       show('app', true);
       loadMe();
     } catch (e) { setError('authError', e.message); }
   };
 
-  $('loginBtn').onclick = () => submitAuth('/api/auth/login');
-  $('registerBtn').onclick = () => submitAuth('/api/auth/register');
-  $('password').addEventListener('keydown', e => { if (e.key === 'Enter') submitAuth('/api/auth/login'); });
+  $('modeLogin').onclick = () => setAuthMode('login');
+  $('modeRegister').onclick = () => setAuthMode('register');
+  $('submitAuthBtn').onclick = submitAuth;
+  $('password').addEventListener('keydown', e => { if (e.key === 'Enter') submitAuth(); });
+  $('password2').addEventListener('keydown', e => { if (e.key === 'Enter') submitAuth(); });
   $('logoutBtn').onclick = logout;
   $('tabChat').onclick = () => switchView('chat');
   $('tabDash').onclick = () => switchView('dash');
@@ -1872,12 +1980,7 @@ function bind() {
     el.style.height = Math.min(el.scrollHeight, 160) + 'px';
   });
 
-  document.querySelectorAll('.suggestion').forEach(btn => {
-    btn.onclick = () => {
-      $('input').value = btn.dataset.text || '';
-      $('input').focus();
-    };
-  });
+  bindSuggestions();
 }
 
 bind();

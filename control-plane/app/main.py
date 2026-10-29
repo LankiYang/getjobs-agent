@@ -596,6 +596,16 @@ def agent_history(session_id: str, user_id: int = Depends(current_user)) -> dict
     return {"messages": agent.history(user_id, session_id)}
 
 
+@app.get("/api/agent/latest-session")
+def agent_latest_session(user_id: int = Depends(current_user)) -> dict:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT session_id FROM agent_messages WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+            (user_id,),
+        ).fetchone()
+    return {"sessionId": row["session_id"] if row else None}
+
+
 @app.get("/api/agent/events/stream")
 async def agent_events(user_id: int = Depends(current_user)):
     queue = hub.subscribe(user_id)
