@@ -41,6 +41,19 @@ private static final boolean HEADLESS = isTruthy(System.getenv("OB_BROWSER_HEADL
 
 > 注意：Boss 有概率对无头浏览器做风险控制（验证码/限制）；上游默认有头也是这个原因。遇到风控时可临时切回有头模式排查。
 
+## 4. 通用浏览器工具（任意网申）
+
+新增文件：
+
+- `worker/service/CustomBrowserService.java`：在 PlaywrightManager 的持久化上下文里维护一个独立标签页，提供 open / snapshot / click / fill / select / check / press / upload / screenshot
+- `application/controller/BrowserController.java`：`/api/browser/*` 接口，由 worker secret 保护；打开 URL 前校验协议与外网地址（拒绝 localhost/内网）
+
+配套修改：
+
+- `PlaywrightManager`：暴露 `getContext()` 供通用浏览器使用
+- `OfferbuddyWorkerFilter`：`ALLOWED_PREFIXES` 增加 `/api/browser/`
+- 快照会给可交互元素打 `data-gj-ref="eN"`，agent 用 ref 操作；页面变化后需要重新 snapshot
+
 ## 未修改但依赖的上游行为
 
 - `OB_WORKER_SECRET` 存在时：不自动打开管理页、不监听 6866、启动时不初始化 Playwright（浏览器按需拉起，利于多实例省内存）

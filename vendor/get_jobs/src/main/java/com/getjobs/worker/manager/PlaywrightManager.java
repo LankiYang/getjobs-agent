@@ -1964,6 +1964,11 @@ public class PlaywrightManager {
         return playwright != null && context != null && bossPage != null && !browserClosed;
     }
 
+    /** 供通用浏览器工具使用：当前持久化上下文。调用前需先 init()。 */
+    public BrowserContext getContext() {
+        return context;
+    }
+
     /**
      * 确保浏览器可用：已经关闭就重新拉起来。
      * <p>

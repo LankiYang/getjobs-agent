@@ -20,7 +20,8 @@ import java.util.Set;
 public class OfferbuddyWorkerFilter extends OncePerRequestFilter {
     private static final java.util.List<String> ALLOWED_PREFIXES = java.util.List.of(
             "/api/offerbuddy/", "/api/boss/", "/api/liepin/", "/api/51job/", "/api/jobs/",
-            "/api/zhilian/", "/api/ai/", "/api/config", "/api/cookie", "/api/health", "/api/playwright/");
+            "/api/zhilian/", "/api/ai/", "/api/config", "/api/cookie", "/api/health", "/api/playwright/",
+            "/api/browser/");
     private final String secret = System.getenv("OB_WORKER_SECRET");
 
     private static boolean isAllowed(String uri) {
