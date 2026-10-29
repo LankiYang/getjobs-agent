@@ -1,6 +1,7 @@
 package com.getjobs.worker.service;
 
 import com.getjobs.worker.manager.PlaywrightManager;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.microsoft.playwright.BrowserContext;
 import com.microsoft.playwright.Page;
 import com.microsoft.playwright.options.ScreenshotType;
@@ -25,6 +26,8 @@ import java.util.function.Function;
 public class CustomBrowserService {
 
     private final PlaywrightManager playwrightManager;
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private volatile Page page;
 
@@ -72,8 +75,76 @@ public class CustomBrowserService {
 
     public void click(String ref) {
         onPage(p -> {
+            java.util.Set<Page> before = new java.util.LinkedHashSet<>(p.context().pages());
             p.locator(refSelector(ref)).first().click();
+            adoptNewPage(p, before);
             return null;
+        });
+    }
+
+    public void clickText(String text) {
+        onPage(p -> {
+            java.util.Set<Page> before = new java.util.LinkedHashSet<>(p.context().pages());
+            p.getByText(text, new Page.GetByTextOptions().setExact(true))
+                    .first()
+                    .click();
+            adoptNewPage(p, before);
+            return null;
+        });
+    }
+
+    private void adoptNewPage(Page current, java.util.Set<Page> before) {
+        try {
+            for (Page candidate : current.context().pages()) {
+                if (!before.contains(candidate) && !candidate.isClosed()) {
+                    this.page = candidate;
+                    this.page.setDefaultTimeout(15000);
+                    break;
+                }
+            }
+        } catch (Exception ignored) {
+            // 没有新页面就保持当前页
+        }
+    }
+
+    public String links() {
+        return onPage(p -> String.valueOf(p.evaluate(LINKS_JS)));
+    }
+
+    public String pages() {
+        return onPage(p -> {
+            var rows = new java.util.ArrayList<java.util.Map<String, Object>>();
+            var list = p.context().pages();
+            for (int i = 0; i < list.size(); i++) {
+                Page item = list.get(i);
+                java.util.Map<String, Object> row = new LinkedHashMap<>();
+                row.put("index", i);
+                row.put("url", item.url());
+                row.put("title", item.title());
+                row.put("current", item == page);
+                rows.add(row);
+            }
+            try {
+                return MAPPER.writeValueAsString(rows);
+            } catch (Exception e) {
+                return "[]";
+            }
+        });
+    }
+
+    public Map<String, Object> switchPage(int index) {
+        return onPage(p -> {
+            var list = p.context().pages();
+            if (index < 0 || index >= list.size()) {
+                throw new IllegalArgumentException("页码不存在: " + index);
+            }
+            this.page = list.get(index);
+            this.page.setDefaultTimeout(15000);
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("ok", true);
+            result.put("url", this.page.url());
+            result.put("title", this.page.title());
+            return result;
         });
     }
 
@@ -117,6 +188,16 @@ public class CustomBrowserService {
         });
     }
 
+    public void uploadFile(String ref, String selector, String filePath) {
+        onPage(p -> {
+            var locator = selector != null && !selector.isBlank()
+                    ? p.locator(selector).first()
+                    : p.locator(refSelector(ref)).first();
+            locator.setInputFiles(Paths.get(filePath));
+            return null;
+        });
+    }
+
     public byte[] screenshot() {
         return onPage(p -> p.screenshot(new Page.ScreenshotOptions().setType(ScreenshotType.PNG)));
     }
@@ -127,6 +208,18 @@ public class CustomBrowserService {
         }
         return "[data-gj-ref=\"" + ref + "\"]";
     }
+
+    private static final String LINKS_JS = """
+            () => {
+              const clean = (s) => (s || '').replace(/\\s+/g, ' ').trim().slice(0, 90);
+              return JSON.stringify(
+                Array.from(document.querySelectorAll('a[href]'))
+                  .map(a => ({ text: clean(a.innerText), href: String(a.getAttribute('href') || '').slice(0, 200) }))
+                  .filter(item => item.text || item.href)
+                  .slice(0, 200)
+              );
+            }
+            """;
 
     private static final String SNAPSHOT_JS = """
             () => {

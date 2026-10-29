@@ -50,6 +50,29 @@ public class BrowserController {
         return Map.of("ok", true);
     }
 
+    @PostMapping("/click-text")
+    public Map<String, Object> clickText(@RequestBody Map<String, String> body) {
+        browser.clickText(body.getOrDefault("text", ""));
+        return Map.of("ok", true);
+    }
+
+    @GetMapping("/links")
+    public Map<String, Object> links() {
+        return Map.of("ok", true, "links", browser.links());
+    }
+
+    @GetMapping("/pages")
+    public Map<String, Object> pages() {
+        return Map.of("ok", true, "pages", browser.pages());
+    }
+
+    @PostMapping("/switch-page")
+    public Map<String, Object> switchPage(@RequestBody Map<String, Object> body) {
+        Object value = body.getOrDefault("index", 0);
+        int index = value instanceof Number number ? number.intValue() : Integer.parseInt(String.valueOf(value));
+        return browser.switchPage(index);
+    }
+
     @PostMapping("/fill")
     public Map<String, Object> fill(@RequestBody Map<String, String> body) {
         browser.fill(body.get("ref"), body.get("value"));
@@ -82,6 +105,36 @@ public class BrowserController {
         }
         browser.upload(body.get("ref"), info.get().path().toString());
         return ResponseEntity.ok(Map.of("ok", true, "file", info.get().fileName()));
+    }
+
+    @PostMapping("/upload-file")
+    public ResponseEntity<?> uploadFile(@RequestBody Map<String, String> body) {
+        String path = body.getOrDefault("path", "").trim();
+        if (path.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("message", "path 不能为空"));
+        }
+        java.nio.file.Path file;
+        try {
+            file = java.nio.file.Paths.get(path).toAbsolutePath().normalize();
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("message", "文件路径不正确"));
+        }
+        String lower = file.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
+        if (!lower.matches(".*\\.(pdf|doc|docx|png|jpg|jpeg)$")) {
+            return ResponseEntity.badRequest().body(Map.of("message", "只支持 pdf/doc/docx/png/jpg 文件"));
+        }
+        try {
+            if (!java.nio.file.Files.isRegularFile(file)) {
+                return ResponseEntity.badRequest().body(Map.of("message", "文件不存在"));
+            }
+            if (java.nio.file.Files.size(file) > 20L * 1024 * 1024) {
+                return ResponseEntity.badRequest().body(Map.of("message", "文件不能超过 20MB"));
+            }
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("message", "无法读取文件"));
+        }
+        browser.uploadFile(body.get("ref"), body.get("selector"), file.toString());
+        return ResponseEntity.ok(Map.of("ok", true, "file", file.getFileName().toString()));
     }
 
     @GetMapping(value = "/screenshot", produces = MediaType.IMAGE_PNG_VALUE)
