@@ -25,7 +25,15 @@ MODEL = os.environ.get("AGENT_MODEL", "").strip() or (
     DEFAULT_ANTHROPIC_MODEL if PROVIDER == "anthropic" else ""
 )
 MAX_TOKENS = int(os.environ.get("AGENT_MAX_TOKENS", "4096"))
-MAX_STEPS = int(os.environ.get("AGENT_MAX_STEPS", "24"))
+MAX_STEPS = int(os.environ.get("AGENT_MAX_STEPS", "40"))
+
+
+def _step_limit_message(tool_events: list[dict]) -> str:
+    used = len(tool_events)
+    return (
+        f"这轮已经执行了 {used} 次工具调用，达到步数上限（{MAX_STEPS} 轮）先暂停。"
+        "已经完成的操作会保留；回复「继续」我会接着做，或者告诉我下一步只做哪件事。"
+    )
 HISTORY_LIMIT = int(os.environ.get("AGENT_HISTORY_LIMIT", "20"))
 REQUIRE_CONFIRM = os.environ.get("AGENT_REQUIRE_CONFIRM", "1") != "0"
 
@@ -852,7 +860,7 @@ def _run_anthropic(user_id: int, session_id: str) -> dict:
             )
         messages.append({"role": "user", "content": result_blocks})
 
-    fallback = "这轮操作步骤过多，已先暂停。请把条件再明确一下，或者告诉我下一步只做哪件事。"
+    fallback = _step_limit_message(tool_events)
     _save_message(user_id, session_id, "assistant", fallback)
     return {
         "sessionId": session_id,
@@ -920,7 +928,7 @@ def _run_openai(user_id: int, session_id: str) -> dict:
                 }
             )
 
-    fallback = "这轮操作步骤过多，已先暂停。请把条件再明确一下，或者告诉我下一步只做哪件事。"
+    fallback = _step_limit_message(tool_events)
     _save_message(user_id, session_id, "assistant", fallback)
     return {
         "sessionId": session_id,
@@ -1080,7 +1088,7 @@ def _stream_anthropic_loop(user_id: int, session_id: str):
             )
         messages.append({"role": "user", "content": result_blocks})
 
-    fallback = "这轮操作步骤过多，已先暂停。请把条件再明确一下，或者告诉我下一步只做哪件事。"
+    fallback = _step_limit_message(tool_events)
     _save_message(user_id, session_id, "assistant", fallback)
     yield {
         "type": "done",
