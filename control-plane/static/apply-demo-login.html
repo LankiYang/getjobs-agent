@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>示例公司 · 人才招聘（需要登录）</title>
+<style>
+  body { margin: 0; font-family: system-ui, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f4f5f0; color: #1b1e1b; }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 48px 24px 64px; }
+  h1 { font-size: 26px; margin: 0 0 6px; }
+  .sub { color: #6b6f66; margin-bottom: 28px; }
+  .card { background: #fff; border: 1px solid #dcdcd2; padding: 28px; }
+  label { display: block; font-size: 13px; color: #555a51; margin-bottom: 6px; }
+  input[type=text], input[type=password], input[type=email], input[type=tel], select {
+    width: 100%; padding: 10px 12px; font-size: 15px; border: 1px solid #c9c9bd; border-radius: 2px; background: #fff;
+  }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+  .field { margin-bottom: 16px; }
+  .check { display: flex; align-items: center; gap: 8px; font-size: 14px; margin: 14px 0; }
+  .captcha { display: flex; align-items: center; gap: 10px; border: 1px solid #d9d9cf; padding: 12px; background: #fafaf6; margin-bottom: 18px; }
+  button { background: #1f4d3d; color: #fff; border: none; padding: 12px 18px; font-size: 15px; border-radius: 2px; cursor: pointer; }
+  .success { background: #eaf3ec; border: 1px solid #b9d4c2; padding: 24px; }
+  .success h2 { margin: 0 0 10px; color: #1f4d3d; }
+  .error { color: #b23a2e; font-size: 13px; margin-top: 10px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>示例公司 · 人才招聘</h1>
+  <div class="sub">在线申请（测试页面：登录 + 人机验证 + 网申表单）</div>
+
+  <div id="loginCard" class="card">
+    <h2 style="margin-top:0">登录后申请</h2>
+    <div class="field"><label for="username">账号</label><input id="username" name="username" type="text" autocomplete="off" /></div>
+    <div class="field"><label for="password">密码</label><input id="password" name="password" type="password" autocomplete="off" /></div>
+    <div class="captcha">
+      <input id="human" name="human" type="checkbox" />
+      <label for="human" style="margin:0">我不是机器人（人机验证）</label>
+    </div>
+    <button id="loginBtn" type="button">登录</button>
+    <div id="loginError" class="error"></div>
+  </div>
+
+  <div id="applyCard" class="card hidden">
+    <h2 style="margin-top:0">后端工程师 · 在线申请</h2>
+    <div class="row">
+      <div><label for="name">姓名</label><input id="name" name="name" type="text" autocomplete="off" /></div>
+      <div><label for="phone">手机号</label><input id="phone" name="phone" type="tel" autocomplete="off" /></div>
+    </div>
+    <div class="field"><label for="email">邮箱</label><input id="email" name="email" type="email" autocomplete="off" /></div>
+    <div class="row">
+      <div>
+        <label for="education">最高学历</label>
+        <select id="education" name="education">
+          <option value="">请选择</option>
+          <option value="本科">本科</option>
+          <option value="硕士">硕士</option>
+          <option value="博士">博士</option>
+        </select>
+      </div>
+      <div>
+        <label for="years">工作年限</label>
+        <select id="years" name="years">
+          <option value="">请选择</option>
+          <option value="1-3年">1-3 年</option>
+          <option value="3-5年">3-5 年</option>
+          <option value="5-10年">5-10 年</option>
+          <option value="10年以上">10 年以上</option>
+        </select>
+      </div>
+    </div>
+    <label class="check"><input id="agree" name="agree" type="checkbox" /> 我已阅读并同意隐私协议</label>
+    <button id="submitBtn" type="button">提交申请</button>
+    <div id="applyError" class="error"></div>
+  </div>
+
+  <div id="result"></div>
+</div>
+<script>
+  document.getElementById('loginBtn').addEventListener('click', () => {
+    const user = document.getElementById('username').value.trim();
+    const pass = document.getElementById('password').value.trim();
+    const human = document.getElementById('human').checked;
+    if (!user || !pass || !human) {
+      document.getElementById('loginError').textContent = '请填写账号、密码并完成人机验证';
+      return;
+    }
+    document.getElementById('loginCard').classList.add('hidden');
+    document.getElementById('applyCard').classList.remove('hidden');
+  });
+
+  document.getElementById('submitBtn').addEventListener('click', () => {
+    const name = document.getElementById('name').value.trim();
+    const phone = document.getElementById('phone').value.trim();
+    const email = document.getElementById('email').value.trim();
+    const education = document.getElementById('education').value;
+    const years = document.getElementById('years').value;
+    const agree = document.getElementById('agree').checked;
+    if (!name || !phone || !email || !education || !agree) {
+      document.getElementById('applyError').textContent = '请补全姓名、手机、邮箱、学历并同意隐私协议';
+      return;
+    }
+    document.getElementById('applyCard').classList.add('hidden');
+    document.getElementById('result').innerHTML = `
+      <div class="success">
+        <h2>提交成功</h2>
+        <p>姓名：${name}</p>
+        <p>手机：${phone}</p>
+        <p>邮箱：${email}</p>
+        <p>学历：${education} · 经验：${years || '未填'}</p>
+      </div>`;
+  });
+</script>
+</body>
+</html>

@@ -212,6 +212,19 @@
   .dot.bad { background: var(--seal); }
   .dot.warn { background: var(--amber); }
   .dot.idle { background: var(--line-strong); }
+  .site-list { display: flex; flex-direction: column; gap: 8px; }
+  .site-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+  .site-name {
+    flex: 1; min-width: 0; color: var(--ink); cursor: pointer;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .site-name:hover { color: var(--seal); }
+  .site-state { font-size: 11px; color: var(--muted); white-space: nowrap; }
+  .site-state.ok { color: var(--green); }
+  .site-state.bad { color: var(--seal); }
+  .site-state.warn { color: var(--amber); }
+  .site-del { border: none; background: none; color: var(--muted); font-size: 14px; padding: 0 2px; }
+  .site-del:hover { color: var(--seal); }
 
   .ledger { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; border: 1px solid var(--line); }
   .ledger div {
@@ -613,6 +626,14 @@
         </div>
       </div>
 
+      <div class="side-block">
+        <h3>网申站点</h3>
+        <div id="sites" class="site-list"></div>
+        <div class="side-actions">
+          <button id="addSiteBtn" class="btn ghost tiny">＋ 添加站点</button>
+        </div>
+      </div>
+
       <div class="side-block ledger-block">
         <h3>台账</h3>
         <div class="ledger">
@@ -710,6 +731,23 @@
         </div>
       </div>
     </main>
+  </div>
+</div>
+
+<!-- 添加网申站点 -->
+<div id="siteModal" class="modal hidden">
+  <div class="modal-card">
+    <h3>添加网申站点</h3>
+    <p class="hint">保存后可随时从侧栏打开并检测登录状态。</p>
+    <label class="mini-label" for="siteUrl">页面地址</label>
+    <input id="siteUrl" class="text-input" placeholder="https://..." />
+    <label class="mini-label" for="siteName">名称（可选）</label>
+    <input id="siteName" class="text-input" placeholder="例如：某公司校招" />
+    <div class="modal-actions">
+      <button id="cancelSite" class="btn ghost tiny" type="button">取消</button>
+      <button id="saveSite" class="btn tiny" type="button">保存并检测</button>
+    </div>
+    <div id="siteError" class="error"></div>
   </div>
 </div>
 
@@ -911,6 +949,7 @@ async function loadMe() {
     loadChannels(),
     state.runnerRunning ? loadStats() : Promise.resolve(),
   ]);
+  await loadSites();
   await loadHistory();
   startEventStream();
 }
@@ -1305,6 +1344,103 @@ async function stopRunner() {
   loadRunner();
 }
 
+const SITE_STATE_TEXT = {
+  ok: ['可填写', 'ok'],
+  login_required: ['需登录/验证', 'warn'],
+  unreachable: ['不可达', 'bad'],
+  unknown: ['未检测', ''],
+};
+
+async function loadSites() {
+  try {
+    const data = await api('/api/sites');
+    const box = $('sites');
+    box.innerHTML = '';
+    const sites = data.sites || [];
+    if (!sites.length) {
+      box.innerHTML = '<span class="mini-hint">还没有保存的站点</span>';
+      return;
+    }
+    sites.forEach(site => {
+      const row = document.createElement('div');
+      row.className = 'site-row';
+      const name = document.createElement('span');
+      name.className = 'site-name';
+      name.textContent = site.name || site.url;
+      name.title = site.url;
+      name.onclick = () => checkSite(site);
+      const [text, tone] = SITE_STATE_TEXT[site.state] || ['未知', ''];
+      const stateEl = document.createElement('span');
+      stateEl.className = 'site-state ' + tone;
+      stateEl.textContent = text;
+      const del = document.createElement('button');
+      del.className = 'site-del';
+      del.type = 'button';
+      del.textContent = '×';
+      del.title = '删除';
+      del.onclick = async (e) => {
+        e.stopPropagation();
+        try {
+          await api('/api/sites/' + site.id, { method: 'DELETE' });
+          loadSites();
+        } catch (err) { /* ignore */ }
+      };
+      row.append(name, stateEl, del);
+      box.appendChild(row);
+    });
+  } catch (e) {
+    $('sites').innerHTML = '<span class="mini-hint">' + e.message + '</span>';
+  }
+}
+
+async function checkSite(site) {
+  if (!state.runnerRunning) {
+    addMessage('system', '请先启动运行环境，再检测站点。');
+    return;
+  }
+  addMessage('system', '正在打开并检测：' + (site.name || site.url));
+  try {
+    const res = await api('/api/sites/' + site.id + '/check', { method: 'POST' });
+    await loadSites();
+    if (res.state === 'login_required') {
+      addMessage('system', '该站点需要登录或人机验证。请点「接管浏览器」完成，然后让 agent 继续。');
+    } else if (res.state === 'ok') {
+      addMessage('system', '已打开：' + (res.title || site.name) + '（可直接填写）');
+    } else {
+      addMessage('system', '打开失败：' + (res.error || '未知错误'));
+    }
+  } catch (e) {
+    addMessage('system', '检测失败：' + e.message);
+  }
+}
+
+function openSiteModal() {
+  setError('siteError', '');
+  show('siteModal', true);
+}
+
+async function saveSite() {
+  const url = $('siteUrl').value.trim();
+  const name = $('siteName').value.trim();
+  if (!url) {
+    setError('siteError', '请填写页面地址');
+    return;
+  }
+  try {
+    const site = await api('/api/sites', {
+      method: 'POST',
+      body: JSON.stringify({ url, name: name || null }),
+    });
+    $('siteUrl').value = '';
+    $('siteName').value = '';
+    show('siteModal', false);
+    await loadSites();
+    await checkSite(site);
+  } catch (e) {
+    setError('siteError', e.message);
+  }
+}
+
 function ensureToolBox(container) {
   let box = container.querySelector('.tools');
   if (!box) {
@@ -1694,6 +1830,9 @@ function bind() {
   $('startRunner').onclick = startRunner;
   $('stopRunner').onclick = stopRunner;
   $('loginBoss').onclick = openQr;
+  $('addSiteBtn').onclick = openSiteModal;
+  $('cancelSite').onclick = () => show('siteModal', false);
+  $('saveSite').onclick = saveSite;
   $('takeoverBtn').onclick = openTakeover;
   $('qrTakeover').onclick = openTakeover;
   $('closeTakeover').onclick = closeTakeover;
@@ -1736,6 +1875,7 @@ setInterval(() => {
   loadRunner();
   if (state.runnerRunning) loadChannels();
 }, 5000);
+setInterval(() => { if (state.token) loadSites(); }, 30000);
 </script>
 </body>
 </html>

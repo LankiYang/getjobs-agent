@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import queue
+import threading
 from pathlib import Path
 
 import httpx
@@ -23,6 +25,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import agent, resume, runners
+from . import sites as site_service
 from .channels import CHANNELS
 from .config import ALLOWED_ORIGINS
 from .db import get_conn, init_db
@@ -200,6 +203,39 @@ def channels_status(user_id: int = Depends(current_user)) -> dict:
                 entry["state"] = "unknown"
         items.append(entry)
     return {"runnerRunning": running, "channels": items}
+
+
+class SiteRequest(BaseModel):
+    url: str
+    name: str | None = None
+
+
+@app.get("/api/sites")
+def list_custom_sites(user_id: int = Depends(current_user)) -> dict:
+    return {"sites": site_service.list_sites(user_id)}
+
+
+@app.post("/api/sites")
+def add_custom_site(body: SiteRequest, user_id: int = Depends(current_user)) -> dict:
+    error = site_service.validate_url(body.url)
+    if error:
+        raise HTTPException(400, error)
+    return site_service.upsert_site(user_id, body.name or body.url, body.url)
+
+
+@app.delete("/api/sites/{site_id}")
+def delete_custom_site(site_id: int, user_id: int = Depends(current_user)) -> dict:
+    if not site_service.delete_site(user_id, site_id):
+        raise HTTPException(404, "站点不存在")
+    return {"ok": True}
+
+
+@app.post("/api/sites/{site_id}/check")
+def check_custom_site(site_id: int, user_id: int = Depends(current_user)) -> dict:
+    site = site_service.get_site(user_id, site_id)
+    if not site:
+        raise HTTPException(404, "站点不存在")
+    return site_service.check_site(user_id, site)
 
 
 @app.post("/api/browser/takeover")
@@ -513,21 +549,39 @@ def agent_chat(body: ChatRequest, user_id: int = Depends(current_user)) -> dict:
 
 
 @app.post("/api/agent/chat/stream")
-def agent_chat_stream(body: ChatRequest, user_id: int = Depends(current_user)):
-    def events():
-        try:
-            for event in agent.run_chat_stream(
-                user_id, body.session_id, body.message
-            ):
+async def agent_chat_stream(body: ChatRequest, user_id: int = Depends(current_user)):
+    async def events():
+        results: queue.Queue = queue.Queue()
+
+        def worker():
+            try:
+                for event in agent.run_chat_stream(
+                    user_id, body.session_id, body.message
+                ):
+                    results.put(("event", event))
+            except agent.AgentNotConfigured as exc:
+                results.put(("error", str(exc)))
+            except httpx.HTTPError as exc:
+                results.put(("error", f"模型调用失败: {exc}"))
+            except Exception as exc:
+                results.put(("error", str(exc)))
+            finally:
+                results.put(("end", None))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+        while True:
+            try:
+                kind, payload = await asyncio.to_thread(results.get, True, 10)
+            except queue.Empty:
+                yield ": ping\n\n"
+                continue
+            if kind == "error":
+                event = {"type": "error", "message": payload}
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-        except agent.AgentNotConfigured as exc:
-            payload = {"type": "error", "message": str(exc)}
-            yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
-        except httpx.HTTPError as exc:
-            payload = {"type": "error", "message": f"模型调用失败: {exc}"}
-            yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
-        except Exception as exc:
-            payload = {"type": "error", "message": str(exc)}
+                break
+            if kind == "end":
+                break
             yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(

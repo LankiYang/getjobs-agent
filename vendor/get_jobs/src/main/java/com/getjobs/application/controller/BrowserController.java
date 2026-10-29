@@ -2,6 +2,7 @@ package com.getjobs.application.controller;
 
 import com.getjobs.application.service.BossResumeImageService;
 import com.getjobs.worker.service.CustomBrowserService;
+import com.microsoft.playwright.PlaywrightException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -86,6 +87,15 @@ public class BrowserController {
     @GetMapping(value = "/screenshot", produces = MediaType.IMAGE_PNG_VALUE)
     public byte[] screenshot() {
         return browser.screenshot();
+    }
+
+    @ExceptionHandler({IllegalArgumentException.class, PlaywrightException.class})
+    public ResponseEntity<Map<String, Object>> handleActionError(Exception e) {
+        String message = e.getMessage() == null ? "浏览器操作失败" : e.getMessage();
+        if (message.length() > 300) {
+            message = message.substring(0, 300);
+        }
+        return ResponseEntity.badRequest().body(Map.of("message", "浏览器操作失败: " + message));
     }
 
     private static String validateUrl(String url) {

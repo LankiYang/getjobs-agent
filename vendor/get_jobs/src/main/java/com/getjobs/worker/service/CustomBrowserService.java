@@ -132,7 +132,13 @@ public class CustomBrowserService {
             () => {
               const MAX = 120;
               const clean = (s) => (s || '').replace(/\\s+/g, ' ').trim().slice(0, 90);
+              document.querySelectorAll('[data-gj-ref]').forEach(el => el.removeAttribute('data-gj-ref'));
               const labelFor = (el) => {
+                const tag = el.tagName;
+                if ((tag === 'BUTTON' || tag === 'A' || el.getAttribute('role') === 'button')
+                    && (el.innerText || '').trim()) {
+                  return clean(el.innerText);
+                }
                 if (el.labels && el.labels.length) return clean(el.labels[0].innerText);
                 const aria = el.getAttribute('aria-label');
                 if (aria) return clean(aria);

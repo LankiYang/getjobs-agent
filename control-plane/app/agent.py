@@ -7,6 +7,7 @@ import uuid
 import httpx
 
 from . import runners, watch
+from . import sites as site_service
 from .channels import CHANNELS
 from .db import get_conn
 
@@ -24,7 +25,7 @@ MODEL = os.environ.get("AGENT_MODEL", "").strip() or (
     DEFAULT_ANTHROPIC_MODEL if PROVIDER == "anthropic" else ""
 )
 MAX_TOKENS = int(os.environ.get("AGENT_MAX_TOKENS", "4096"))
-MAX_STEPS = int(os.environ.get("AGENT_MAX_STEPS", "8"))
+MAX_STEPS = int(os.environ.get("AGENT_MAX_STEPS", "24"))
 HISTORY_LIMIT = int(os.environ.get("AGENT_HISTORY_LIMIT", "20"))
 REQUIRE_CONFIRM = os.environ.get("AGENT_REQUIRE_CONFIRM", "1") != "0"
 
@@ -503,9 +504,18 @@ def execute_tool(user_id: int, name: str, args: dict):
         url = str(args.get("url") or "").strip()
         if not url:
             raise AgentToolError("url 不能为空")
-        return _request_json(
+        data = _request_json(
             user_id, "POST", "/api/browser/open", json={"url": url}, timeout=60
         )
+        try:
+            site_service.upsert_site(
+                user_id,
+                str(data.get("title") or url)[:120],
+                str(data.get("url") or url),
+            )
+        except Exception:
+            pass
+        return data
 
     if name == "page_snapshot":
         data = _request_json(user_id, "GET", "/api/browser/snapshot", timeout=30)
@@ -515,7 +525,17 @@ def execute_tool(user_id: int, name: str, args: dict):
                 raw = json.loads(raw)
             except json.JSONDecodeError:
                 pass
-        return {"snapshot": raw}
+        login_required = False
+        if isinstance(raw, dict):
+            state = site_service.analyze_snapshot(raw)
+            login_required = state == "login_required"
+            url = str(raw.get("url") or "")
+            if url:
+                try:
+                    site_service.update_state(user_id, url, state)
+                except Exception:
+                    pass
+        return {"snapshot": raw, "loginRequired": login_required}
 
     if name == "click_element":
         return _request_json(

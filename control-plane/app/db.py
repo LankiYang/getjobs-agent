@@ -43,6 +43,17 @@ CREATE TABLE IF NOT EXISTS agent_messages (
 
 CREATE INDEX IF NOT EXISTS idx_agent_messages_session
     ON agent_messages(user_id, session_id, id);
+
+CREATE TABLE IF NOT EXISTS custom_sites (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'unknown',
+    last_checked TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE(user_id, url)
+);
 """
 
 
