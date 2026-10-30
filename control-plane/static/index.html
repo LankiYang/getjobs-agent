@@ -439,6 +439,14 @@
     padding: 8px 12px; color: #e8e8e2; font-size: 13px; background: #1e2226;
   }
   .takeover-card iframe { flex: 1; width: 100%; border: none; background: #000; }
+  .takeover-msg { border-left: 3px solid var(--seal); background: #fff9ee; }
+  .takeover-msg .body { display: flex; flex-direction: column; gap: 10px; }
+  .takeover-msg .takeover-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  #takeoverBtn.alert { position: relative; }
+  #takeoverBtn.alert::after {
+    content: ''; position: absolute; top: -3px; right: -3px;
+    width: 8px; height: 8px; border-radius: 50%; background: #d9480f;
+  }
   .modal-card .hint { font-size: 12.5px; color: var(--muted); margin: 0 0 18px; }
   .qr-frame {
     background: #fff; border: 1px solid var(--line);
@@ -1114,13 +1122,26 @@ async function loadHistory() {
         renderMarkdown(el.querySelector('.body'), item.content || '');
       }
     });
+    const last = items[items.length - 1];
+    if (
+      last && last.role === 'assistant' && /接管浏览器/.test(last.content || '')
+      && !$('chat').querySelector('.takeover-msg')
+    ) {
+      showTakeoverCard('该网站需要登录或人机验证，请在接管浏览器中完成，然后点“我已登录，继续”。', '');
+    }
     const chat = $('chat');
     chat.scrollTop = chat.scrollHeight;
   } catch (e) { /* ignore */ }
 }
 
 function handleAgentEvent(ev) {
-  if (!ev || ev.type !== 'agent_message') return;
+  if (!ev) return;
+  if (ev.type === 'runner_idle') {
+    addMessage('system', ev.message || '运行环境已空闲自动关闭，下次发消息会自动重启。');
+    loadRunner();
+    return;
+  }
+  if (ev.type !== 'agent_message') return;
   if (!state.sessionId && ev.sessionId) saveSession(ev.sessionId);
   addMessage('agent', ev.message || '');
   if (state.view !== 'chat') $('chatBadge').classList.remove('hidden');
@@ -1676,6 +1697,7 @@ async function sendMessage() {
   body.textContent = '思考中…';
   let full = '';
   let scheduled = false;
+  let takeoverShown = false;
 
   const render = () => {
     renderMarkdown(body, full || '');
@@ -1729,10 +1751,16 @@ async function sendMessage() {
         updateToolChip(el, ev.name, !!ev.ok);
       } else if (ev.type === 'qr') {
         showQr(ev.url);
+      } else if (ev.type === 'takeover') {
+        takeoverShown = true;
+        showTakeoverCard(ev.reason, ev.url);
       } else if (ev.type === 'done') {
         full = ev.reply || full;
         render();
         saveSession(ev.sessionId);
+        if (!takeoverShown && /接管浏览器/.test(full)) {
+          showTakeoverCard('该网站需要登录或人机验证，请在接管浏览器中完成，然后点“我已登录，继续”。', '');
+        }
         finished = true;
       } else if (ev.type === 'error') {
         throw new Error(ev.message || '模型返回错误');
@@ -1771,7 +1799,60 @@ async function sendMessage() {
   }
 }
 
+function markTakeoverNeeded() {
+  $('takeoverBtn')?.classList.add('alert');
+}
+
+function clearTakeoverNeeded() {
+  $('takeoverBtn')?.classList.remove('alert');
+}
+
+function showTakeoverCard(reason, url) {
+  markTakeoverNeeded();
+  $('empty')?.remove();
+  const el = document.createElement('div');
+  el.className = 'msg agent takeover-msg';
+  const label = document.createElement('div');
+  label.className = 'who-label';
+  label.textContent = '代理';
+  const body = document.createElement('div');
+  body.className = 'body';
+  const title = document.createElement('strong');
+  title.textContent = '需要你接管浏览器';
+  const desc = document.createElement('div');
+  desc.textContent = reason || '该网站需要登录或人机验证，请在接管浏览器中完成。';
+  body.append(title, desc);
+  if (url) {
+    const hint = document.createElement('div');
+    hint.className = 'mini-hint';
+    hint.textContent = url;
+    body.appendChild(hint);
+  }
+  const actions = document.createElement('div');
+  actions.className = 'takeover-actions';
+  const open = document.createElement('button');
+  open.className = 'btn tiny';
+  open.textContent = '打开接管浏览器';
+  open.onclick = () => { clearTakeoverNeeded(); openTakeover(); };
+  const cont = document.createElement('button');
+  cont.className = 'btn ghost tiny';
+  cont.textContent = '我已登录，继续';
+  cont.onclick = () => {
+    clearTakeoverNeeded();
+    const input = $('input');
+    input.value = '继续';
+    if (state.busy) setTimeout(() => sendMessage(), 300);
+    else sendMessage();
+  };
+  actions.append(open, cont);
+  body.appendChild(actions);
+  el.append(label, body);
+  $('chat').appendChild(el);
+  $('chat').scrollTop = $('chat').scrollHeight;
+}
+
 async function openTakeover() {
+  clearTakeoverNeeded();
   try {
     const data = await api('/api/browser/takeover', { method: 'POST' });
     $('takeoverFrame').src = data.viewPath;

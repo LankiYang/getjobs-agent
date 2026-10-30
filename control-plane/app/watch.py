@@ -3,6 +3,7 @@
 import threading
 import time
 
+from . import activity
 from . import runners
 from .channels import CHANNELS
 from .db import get_conn
@@ -109,7 +110,7 @@ def _push(user_id: int, session_id: str, message: str) -> None:
     )
 
 
-def _watch(user_id: int, channel: str, session_id: str, baseline: int | None, target: int | None) -> None:
+def _watch_inner(user_id: int, channel: str, session_id: str, baseline: int | None, target: int | None) -> None:
     entry = CHANNELS.get(channel)
     if not entry:
         return
@@ -141,6 +142,14 @@ def _watch(user_id: int, channel: str, session_id: str, baseline: int | None, ta
             return
 
     _push(user_id, session_id, _summary(user_id, channel, baseline, target, "timeout"))
+
+
+def _watch(user_id: int, channel: str, session_id: str, baseline: int | None, target: int | None) -> None:
+    activity.begin_busy(user_id)
+    try:
+        _watch_inner(user_id, channel, session_id, baseline, target)
+    finally:
+        activity.end_busy(user_id)
 
 
 def start_watch(

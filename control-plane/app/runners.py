@@ -11,6 +11,7 @@ from pathlib import Path
 
 import httpx
 
+from . import activity
 from . import config
 from .db import get_conn
 
@@ -122,6 +123,7 @@ def _ensure_layout(data_dir: Path) -> None:
 
 
 def start(user_id: int) -> dict:
+    activity.touch(user_id)
     row = _row(user_id)
     if row and healthy(row):
         _update(user_id, status="running")
@@ -360,6 +362,8 @@ def request(user_id: int, method: str, path: str, *, params=None, json=None, fil
     row = _row(user_id)
     if not row or not healthy(row):
         raise RunnerError("runner 未运行，请先启动", status_code=409)
+    if method.upper() != "GET":
+        activity.touch(user_id)
     url = f"http://127.0.0.1:{row['port']}{path}"
     if stream:
         return httpx.stream(method, url, headers=_headers(row), params=params, timeout=None)

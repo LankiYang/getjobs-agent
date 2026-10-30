@@ -56,6 +56,59 @@ public class BrowserController {
         return Map.of("ok", true);
     }
 
+    @PostMapping("/click-selector")
+    public Map<String, Object> clickSelector(@RequestBody Map<String, Object> body) {
+        String selector = String.valueOf(body.getOrDefault("selector", "")).trim();
+        if (selector.isEmpty() || selector.length() > 300) {
+            throw new IllegalArgumentException("selector 不能为空且不能超过 300 字符");
+        }
+        int index = intValue(body.get("index"), 0);
+        boolean force = Boolean.parseBoolean(String.valueOf(body.getOrDefault("force", false)));
+        browser.clickSelector(selector, index, force);
+        return Map.of("ok", true);
+    }
+
+    @PostMapping("/click-xy")
+    public Map<String, Object> clickXY(@RequestBody Map<String, Object> body) {
+        double x = doubleValue(body.get("x"));
+        double y = doubleValue(body.get("y"));
+        if (x < 0 || y < 0 || x > 10000 || y > 10000) {
+            throw new IllegalArgumentException("坐标超出范围");
+        }
+        browser.clickXY(x, y);
+        return Map.of("ok", true);
+    }
+
+    @PostMapping("/type")
+    public Map<String, Object> type(@RequestBody Map<String, String> body) {
+        String text = body.getOrDefault("text", "");
+        if (text.isEmpty() || text.length() > 5000) {
+            throw new IllegalArgumentException("text 长度需在 1-5000 之间");
+        }
+        browser.typeText(text);
+        return Map.of("ok", true);
+    }
+
+    @PostMapping("/scroll")
+    public Map<String, Object> scroll(@RequestBody Map<String, Object> body) {
+        double delta = doubleValue(body.get("deltaY"));
+        if (Math.abs(delta) > 20000) {
+            throw new IllegalArgumentException("滚动距离过大");
+        }
+        browser.scroll(delta);
+        return Map.of("ok", true);
+    }
+
+    @PostMapping("/wait")
+    public Map<String, Object> wait(@RequestBody Map<String, Object> body) {
+        int millis = intValue(body.get("ms"), 1000);
+        if (millis < 0 || millis > 15000) {
+            throw new IllegalArgumentException("等待时间需在 0-15000 毫秒之间");
+        }
+        browser.waitFor(millis);
+        return Map.of("ok", true);
+    }
+
     @GetMapping("/links")
     public Map<String, Object> links() {
         return Map.of("ok", true, "links", browser.links());
@@ -149,6 +202,28 @@ public class BrowserController {
             message = message.substring(0, 300);
         }
         return ResponseEntity.badRequest().body(Map.of("message", "浏览器操作失败: " + message));
+    }
+
+    private static int intValue(Object value, int fallback) {
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        try {
+            return Integer.parseInt(String.valueOf(value));
+        } catch (Exception e) {
+            return fallback;
+        }
+    }
+
+    private static double doubleValue(Object value) {
+        if (value instanceof Number number) {
+            return number.doubleValue();
+        }
+        try {
+            return Double.parseDouble(String.valueOf(value));
+        } catch (Exception e) {
+            throw new IllegalArgumentException("坐标或距离必须是数字");
+        }
     }
 
     private static String validateUrl(String url) {

@@ -25,7 +25,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import agent, resume, resume_service, runners
+from . import activity, agent, resume, resume_service, runners
 from . import sites as site_service
 from .channels import CHANNELS
 from .config import ALLOWED_ORIGINS
@@ -49,10 +49,32 @@ app.add_middleware(
 )
 
 
+def _stop_idle_runner(user_id: int) -> None:
+    try:
+        runners.stop(user_id)
+    except Exception:
+        activity.touch(user_id)
+        return
+    hub.publish(
+        user_id,
+        {
+            "type": "runner_idle",
+            "message": "运行环境已空闲自动关闭，下次发消息会自动重启。",
+        },
+    )
+
+
 @app.on_event("startup")
 async def _startup() -> None:
     init_db()
     hub.set_loop(asyncio.get_running_loop())
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT user_id FROM runners WHERE status IN ('running', 'starting')"
+        ).fetchall()
+    for row in rows:
+        activity.touch(row["user_id"])
+    activity.start_reaper(_stop_idle_runner)
 
 
 @app.exception_handler(runners.RunnerError)
@@ -263,6 +285,7 @@ def check_custom_site(site_id: int, user_id: int = Depends(current_user)) -> dic
 
 @app.post("/api/browser/takeover")
 def browser_takeover(user_id: int = Depends(current_user)) -> dict:
+    activity.touch(user_id)
     try:
         runners.ensure_running(user_id)
     except runners.RunnerError as exc:
@@ -296,6 +319,7 @@ async def browser_takeover_ws(websocket: WebSocket):
         return
 
     await websocket.accept(subprotocol="binary")
+    activity.vnc_open(user_id)
 
     async def ws_to_tcp():
         try:
@@ -330,6 +354,7 @@ async def browser_takeover_ws(websocket: WebSocket):
     _, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
     for task in pending:
         task.cancel()
+    activity.vnc_close(user_id)
 
 
 def _channel(channel: str):
@@ -621,6 +646,7 @@ class ChatRequest(BaseModel):
 
 @app.post("/api/agent/chat")
 def agent_chat(body: ChatRequest, user_id: int = Depends(current_user)) -> dict:
+    activity.begin_busy(user_id)
     try:
         runners.ensure_running(user_id)
         return agent.run_chat(user_id, body.session_id, body.message)
@@ -630,11 +656,13 @@ def agent_chat(body: ChatRequest, user_id: int = Depends(current_user)) -> dict:
         raise HTTPException(503, str(exc)) from exc
     except httpx.HTTPError as exc:
         raise HTTPException(502, f"模型调用失败: {exc}") from exc
+    finally:
+        activity.end_busy(user_id)
 
 
 @app.post("/api/agent/chat/stream")
 async def agent_chat_stream(body: ChatRequest, user_id: int = Depends(current_user)):
-    async def events():
+    async def _events_inner():
         try:
             current = await asyncio.to_thread(runners.status, user_id)
             if not current.get("running"):
@@ -678,6 +706,14 @@ async def agent_chat_stream(body: ChatRequest, user_id: int = Depends(current_us
             if kind == "end":
                 break
             yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+    async def events():
+        activity.begin_busy(user_id)
+        try:
+            async for item in _events_inner():
+                yield item
+        finally:
+            activity.end_busy(user_id)
 
     return StreamingResponse(
         events(),

@@ -3,6 +3,7 @@ package com.getjobs.worker.service;
 import com.getjobs.worker.manager.PlaywrightManager;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.microsoft.playwright.BrowserContext;
+import com.microsoft.playwright.Locator;
 import com.microsoft.playwright.Page;
 import com.microsoft.playwright.options.ScreenshotType;
 import com.microsoft.playwright.options.SelectOption;
@@ -85,25 +86,77 @@ public class CustomBrowserService {
     public void clickText(String text) {
         onPage(p -> {
             java.util.Set<Page> before = new java.util.LinkedHashSet<>(p.context().pages());
-            p.getByText(text, new Page.GetByTextOptions().setExact(true))
-                    .first()
-                    .click();
+            try {
+                p.getByText(text, new Page.GetByTextOptions().setExact(true))
+                        .first()
+                        .click(new Locator.ClickOptions().setTimeout(3000));
+            } catch (Exception exactMiss) {
+                p.getByText(text).first().click(new Locator.ClickOptions().setTimeout(8000));
+            }
             adoptNewPage(p, before);
             return null;
         });
     }
 
+    public void clickSelector(String selector, int index, boolean force) {
+        onPage(p -> {
+            java.util.Set<Page> before = new java.util.LinkedHashSet<>(p.context().pages());
+            p.locator(selector)
+                    .nth(Math.max(index, 0))
+                    .click(new Locator.ClickOptions().setForce(force).setTimeout(8000));
+            adoptNewPage(p, before);
+            return null;
+        });
+    }
+
+    public void clickXY(double x, double y) {
+        onPage(p -> {
+            java.util.Set<Page> before = new java.util.LinkedHashSet<>(p.context().pages());
+            p.mouse().click(x, y);
+            adoptNewPage(p, before);
+            return null;
+        });
+    }
+
+    public void typeText(String text) {
+        onPage(p -> {
+            p.keyboard().type(text);
+            return null;
+        });
+    }
+
+    public void scroll(double deltaY) {
+        onPage(p -> {
+            p.mouse().wheel(0, deltaY);
+            return null;
+        });
+    }
+
+    public void waitFor(long millis) {
+        onPage(p -> {
+            p.waitForTimeout(millis);
+            return null;
+        });
+    }
+
     private void adoptNewPage(Page current, java.util.Set<Page> before) {
-        try {
-            for (Page candidate : current.context().pages()) {
-                if (!before.contains(candidate) && !candidate.isClosed()) {
-                    this.page = candidate;
-                    this.page.setDefaultTimeout(15000);
-                    break;
+        long deadline = System.currentTimeMillis() + 1000;
+        while (System.currentTimeMillis() < deadline) {
+            try {
+                for (Page candidate : current.context().pages()) {
+                    if (!before.contains(candidate) && !candidate.isClosed()) {
+                        this.page = candidate;
+                        this.page.setDefaultTimeout(15000);
+                        return;
+                    }
                 }
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            } catch (Exception ignored) {
+                return;
             }
-        } catch (Exception ignored) {
-            // 没有新页面就保持当前页
         }
     }
 
@@ -223,7 +276,7 @@ public class CustomBrowserService {
 
     private static final String SNAPSHOT_JS = """
             () => {
-              const MAX = 120;
+              const MAX = 200;
               const clean = (s) => (s || '').replace(/\\s+/g, ' ').trim().slice(0, 90);
               document.querySelectorAll('[data-gj-ref]').forEach(el => el.removeAttribute('data-gj-ref'));
               const labelFor = (el) => {
@@ -245,10 +298,14 @@ public class CustomBrowserService {
                 if (wrap) return clean(wrap.innerText);
                 const prev = el.previousElementSibling;
                 if (prev) return clean(prev.innerText);
+                const role = (el.getAttribute('role') || '').toLowerCase();
+                if ((role === 'checkbox' || role === 'radio' || role === 'switch') && el.parentElement) {
+                  return clean(el.parentElement.innerText);
+                }
                 return '';
               };
               const nodes = Array.from(document.querySelectorAll(
-                'input,textarea,select,button,a[href],[role="button"],[contenteditable="true"]'
+                'input,textarea,select,button,a[href],[role="button"],[role="checkbox"],[role="radio"],[role="combobox"],[role="switch"],[role="tab"],[role="option"],[contenteditable="true"]'
               ));
               const elements = [];
               let idx = 0;
@@ -265,13 +322,17 @@ public class CustomBrowserService {
                   ref,
                   tag: el.tagName.toLowerCase(),
                   type: (el.getAttribute('type') || '').toLowerCase(),
+                  role: clean(el.getAttribute('role')),
                   label: labelFor(el),
+                  ariaLabel: clean(el.getAttribute('aria-label')),
                   value: el.value !== undefined ? String(el.value).slice(0, 90) : '',
                   name: clean(el.getAttribute('name')),
                   placeholder: clean(el.getAttribute('placeholder')),
                   text: clean(el.innerText || ''),
                   href: el.tagName === 'A' ? String(el.getAttribute('href') || '').slice(0, 160) : '',
-                  checked: !!el.checked
+                  checked: !!el.checked || el.getAttribute('aria-checked') === 'true',
+                  readonly: !!el.readOnly,
+                  disabled: !!el.disabled
                 };
                 if (el.tagName === 'SELECT') {
                   item.options = Array.from(el.options).slice(0, 25).map(o => ({
