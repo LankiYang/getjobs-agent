@@ -2,6 +2,8 @@
 
 服务器部署使用 **"有头 Chrome + Xvfb 虚拟显示"**：不对桌面弹窗（服务器本来也没有桌面），同时避免无头模式被 Boss 风控识别。不要设置 `RUNNER_HEADLESS`。
 
+新账号的 `db/getjobs.db` 从 `GETJOBS_DB_TEMPLATE` 复制。控制面在复制后会执行 `runners._clear_template_bio`，清空模板自带的 `ai.introduce`（上游作者的个人技术栈示例）；否则新用户会带着别人的简历描述去生成打招呼语。替换模板文件时不需要再手工清理这一段。
+
 ## 方式 A：单机进程模式（先跑通）
 
 依赖：OpenJDK 21、Google Chrome stable、Xvfb、Node.js 18+、中文字体（Noto CJK）。

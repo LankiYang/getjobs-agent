@@ -5,6 +5,7 @@ import os
 import secrets
 import shutil
 import socket
+import sqlite3
 import subprocess
 import time
 from pathlib import Path
@@ -109,6 +110,22 @@ def _allocate_port() -> int:
     raise RunnerError("没有可用的 runner 端口", status_code=503)
 
 
+def _clear_template_bio(database: Path) -> None:
+    """Drop the sample bio shipped in the packaged DB template.
+
+    The upstream template fills ai.introduce with its author's own tech stack.
+    A new account owns none of that text, and an AI greeting built from it would
+    describe someone else. Start empty; user data is never touched because this
+    only runs on the freshly copied template.
+    """
+    try:
+        with sqlite3.connect(database) as conn:
+            conn.execute("UPDATE ai SET introduce = ''")
+    except sqlite3.Error:
+        # A template without an ai table is not a reason to block startup.
+        pass
+
+
 def _ensure_layout(data_dir: Path) -> None:
     (data_dir / "db").mkdir(parents=True, exist_ok=True)
     (data_dir / "logs").mkdir(parents=True, exist_ok=True)
@@ -120,6 +137,7 @@ def _ensure_layout(data_dir: Path) -> None:
                 status_code=503,
             )
         shutil.copy2(config.DB_TEMPLATE, database)
+        _clear_template_bio(database)
 
 
 def start(user_id: int) -> dict:
