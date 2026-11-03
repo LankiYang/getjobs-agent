@@ -115,6 +115,11 @@ public class AiConfigController {
             }
 
             String reply = aiService.sendRequest(content.trim());
+            if (reply == null || reply.isBlank()) {
+                response.put("success", false);
+                response.put("message", "AI 返回空内容");
+                return ResponseEntity.internalServerError().body(response);
+            }
             response.put("success", true);
             response.put("data", reply);
             response.put("message", "AI 请求成功");

@@ -5,6 +5,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.microsoft.playwright.BrowserContext;
 import com.microsoft.playwright.Locator;
 import com.microsoft.playwright.Page;
+import com.microsoft.playwright.APIResponse;
+import com.microsoft.playwright.Route;
+import com.microsoft.playwright.options.FilePayload;
 import com.microsoft.playwright.options.ScreenshotType;
 import com.microsoft.playwright.options.SelectOption;
 import com.microsoft.playwright.options.WaitUntilState;
@@ -31,6 +34,48 @@ public class CustomBrowserService {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private volatile Page page;
+    private BrowserContext guardedContext;
+    private final java.util.Set<Page> guardedPages = new java.util.HashSet<>();
+
+    private void guard(BrowserContext context) {
+        if (context == guardedContext) return;
+        context.route("**/*", route -> {
+            Page requestPage;
+            try {
+                requestPage = route.request().frame().page();
+                Page current = requestPage;
+                while (current != null && !guardedPages.contains(current)) current = current.opener();
+                if (current == null) {
+                    route.resume();
+                    return;
+                }
+                guardedPages.add(requestPage);
+            } catch (Exception e) {
+                route.resume();
+                return;
+            }
+            if (!BrowserNetworkPolicy.allows(route.request().url())) {
+                route.abort();
+                return;
+            }
+            APIResponse response = null;
+            try {
+                response = route.fetch(new Route.FetchOptions().setMaxRedirects(0));
+                String location = response.headers().get("location");
+                if (response.status() >= 300 && response.status() < 400 && location != null
+                        && !BrowserNetworkPolicy.allows(java.net.URI.create(route.request().url()).resolve(location).toString())) {
+                    route.abort();
+                } else {
+                    route.fulfill(new Route.FulfillOptions().setResponse(response));
+                }
+            } catch (Exception e) {
+                route.abort();
+            } finally {
+                if (response != null) response.dispose();
+            }
+        });
+        guardedContext = context;
+    }
 
     private <T> T onPage(Function<Page, T> action) {
         playwrightManager.init();
@@ -40,7 +85,9 @@ public class CustomBrowserService {
                 if (context == null) {
                     throw new IllegalStateException("浏览器上下文不可用");
                 }
+                guard(context);
                 page = context.newPage();
+                guardedPages.add(page);
                 page.setDefaultTimeout(15000);
             }
             return action.apply(page);
@@ -146,6 +193,7 @@ public class CustomBrowserService {
                 for (Page candidate : current.context().pages()) {
                     if (!before.contains(candidate) && !candidate.isClosed()) {
                         this.page = candidate;
+                        guardedPages.add(candidate);
                         this.page.setDefaultTimeout(15000);
                         return;
                     }
@@ -192,6 +240,7 @@ public class CustomBrowserService {
                 throw new IllegalArgumentException("页码不存在: " + index);
             }
             this.page = list.get(index);
+            guardedPages.add(this.page);
             this.page.setDefaultTimeout(15000);
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("ok", true);
@@ -241,12 +290,12 @@ public class CustomBrowserService {
         });
     }
 
-    public void uploadFile(String ref, String selector, String filePath) {
+    public void uploadFile(String ref, String selector, FilePayload file) {
         onPage(p -> {
             var locator = selector != null && !selector.isBlank()
                     ? p.locator(selector).first()
                     : p.locator(refSelector(ref)).first();
-            locator.setInputFiles(Paths.get(filePath));
+            locator.setInputFiles(file);
             return null;
         });
     }

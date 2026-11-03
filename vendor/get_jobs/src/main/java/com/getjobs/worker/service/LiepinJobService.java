@@ -15,6 +15,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 
 /**
@@ -38,13 +39,34 @@ public class LiepinJobService implements JobPlatformService {
     // 停止请求标志
     private volatile boolean shouldStop = false;
 
+    private synchronized boolean reserveRun() {
+        if (isRunning) return false;
+        isRunning = true;
+        shouldStop = false;
+        return true;
+    }
+
+    public boolean startDelivery(Consumer<JobProgressMessage> progressCallback) {
+        if (!reserveRun()) return false;
+        try {
+            CompletableFuture.runAsync(() -> runDelivery(progressCallback));
+            return true;
+        } catch (RuntimeException e) {
+            synchronized (this) { isRunning = false; }
+            throw e;
+        }
+    }
+
     @Override
     public void executeDelivery(Consumer<JobProgressMessage> progressCallback) {
-        if (isRunning) {
+        if (!reserveRun()) {
             progressCallback.accept(JobProgressMessage.warning(PLATFORM, "任务已在运行中"));
             return;
         }
+        runDelivery(progressCallback);
+    }
 
+    private void runDelivery(Consumer<JobProgressMessage> progressCallback) {
         try {
             // 浏览器可能已被手动关闭 / 崩溃，先确保可用，必要时重新拉起
             progressCallback.accept(JobProgressMessage.info(PLATFORM, "检查浏览器状态..."));
@@ -61,8 +83,7 @@ public class LiepinJobService implements JobPlatformService {
                 return;
             }
 
-            isRunning = true;
-            shouldStop = false;
+            if (shouldStop) return;
 
             // 暂停后台登录监控，避免并发访问冲突
             playwrightManager.pauseLiepinMonitoring();
@@ -97,16 +118,18 @@ public class LiepinJobService implements JobPlatformService {
             log.error("猎聘投递任务执行失败", e);
             progressCallback.accept(JobProgressMessage.error(PLATFORM, "投递失败: " + e.getMessage()));
         } finally {
-            isRunning = false;
-            shouldStop = false;
             try {
                 playwrightManager.resumeLiepinMonitoring();
             } catch (Exception ignored) {}
+            synchronized (this) {
+                shouldStop = false;
+                isRunning = false;
+            }
         }
     }
 
     @Override
-    public void stopDelivery() {
+    public synchronized void stopDelivery() {
         if (!isRunning) {
             log.warn("猎聘任务未在运行，无需停止");
             return;

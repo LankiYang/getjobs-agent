@@ -46,13 +46,24 @@ private static final boolean HEADLESS = isTruthy(System.getenv("OB_BROWSER_HEADL
 新增文件：
 
 - `worker/service/CustomBrowserService.java`：在 PlaywrightManager 的持久化上下文里维护一个独立标签页，提供 open / snapshot / click / fill / select / check / press / upload / screenshot
-- `application/controller/BrowserController.java`：`/api/browser/*` 接口，由 worker secret 保护；打开 URL 前校验协议与外网地址（拒绝 localhost/内网）
+- `application/controller/BrowserController.java`：`/api/browser/*` 接口，由 worker secret 保护；配合 `BrowserNetworkPolicy` 检查 URL 和部分浏览器请求，`TrustedBrowserUpload` 只读取 runner 工作目录下 `chat-uploads` 的直接文件。
 
 配套修改：
 
 - `PlaywrightManager`：暴露 `getContext()` 供通用浏览器使用
 - `OfferbuddyWorkerFilter`：`ALLOWED_PREFIXES` 增加 `/api/browser/`
 - 快照会给可交互元素打 `data-gj-ref="eN"`，agent 用 ref 操作；页面变化后需要重新 snapshot
+- 这些请求检查不能替代网络隔离：DNS 解析与连接之间存在竞争，重定向链、弹窗首个请求、Service Worker 和 WebSocket 不保证全部覆盖。runner 仍是进程级隔离，不得视为多租户安全沙箱。
+
+## 5. Boss 单轮名额与停止
+
+`POST /api/boss/start`（以及 `/execute`）可选 JSON `{"maxCount": 5}`；不传则不限量。成功响应返回生效的 `maxCount`。同一 runner 的 Boss 任务在接收启动请求时即占用运行状态，重复启动不会产生第二轮。
+
+名额按岗位沟通入口点击前的占用次数计算，首次“立即沟通”可能自行发送平台默认招呼，继续沟通也占一个名额；调试模式、过滤和未找到入口不占用。执行点原子检查停止及上限，异常时名额不回退：页面可能已执行点击或发送，不能保证消息送达，也可能未实际点击。`attemptedCount` 是占用数，不是成功投递数，单轮可能因岗位不足或错误而低于上限。图片和文字属于该岗位后续动作，不再额外计数。
+
+`POST /api/boss/stop` 的成功只表示请求已接收；`/api/boss/status` 的 `isRunning` 在清理完成后才变为 false，`stopping` 表示停止进行中，`outcome` 为 `idle`、`running`、`stopping`、`completed`、`stopped` 或 `failed`。停止是协作式的：已进入的浏览器操作、AI 调用或图片发送不能撤销，也可能需要等待其超时；停止请求和动作之间的竞争可能使已占用名额的动作继续。控制面仅监视状态，不靠轮询阻止超额。
+
+猎聘启动同样在提交异步任务前原子占用运行状态，避免并发启动返回成功；启动成功不代表实际投递成功。
 
 ## 未修改但依赖的上游行为
 

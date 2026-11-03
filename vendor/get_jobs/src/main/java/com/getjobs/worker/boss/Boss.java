@@ -61,6 +61,15 @@ public class Boss {
     private ProgressCallback progressCallback;
     @Setter
     private Supplier<Boolean> shouldStopCallback;
+    @Setter
+    private Supplier<Boolean> canStartAttemptCallback;
+    @Setter
+    private Supplier<Boolean> reserveAttemptCallback;
+
+    private boolean canStartAttempt() {
+        return (shouldStopCallback == null || !Boolean.TRUE.equals(shouldStopCallback.get()))
+                && (canStartAttemptCallback == null || Boolean.TRUE.equals(canStartAttemptCallback.get()));
+    }
 
     private final List<Job> resultList = new ArrayList<>();
 
@@ -110,13 +119,13 @@ public class Boss {
      */
     public int execute() {
         for (String cityCode : config.getCityCode()) {
-            if (shouldStopCallback != null && Boolean.TRUE.equals(shouldStopCallback.get())) {
-                progressCallback.accept("用户取消投递", 0, 0);
+            if (!canStartAttempt()) {
+                progressCallback.accept("任务已停止或达到本轮名额", 0, 0);
                 break;
             }
             postJobByCity(cityCode);
-            if (shouldStopCallback != null && Boolean.TRUE.equals(shouldStopCallback.get())) {
-                progressCallback.accept("用户取消投递", 0, 0);
+            if (!canStartAttempt()) {
+                progressCallback.accept("任务已停止或达到本轮名额", 0, 0);
                 break;
             }
         }
@@ -228,8 +237,8 @@ public class Boss {
         String searchUrl = getSearchUrl(cityCode);
         for (String keyword : config.getKeywords()) {
             // 检查是否需要停止
-            if (shouldStopCallback.get()) {
-                progressCallback.accept("用户取消投递", 0, 0);
+            if (!canStartAttempt()) {
+                progressCallback.accept("任务已停止或达到本轮名额", 0, 0);
                 return;
             }
 
@@ -253,8 +262,8 @@ public class Boss {
             boolean loadedAll = false;
             for (int i = 0; i < 300; i++) {
                 // 停止检查：滚动加载过程中也要及时响应
-                if (shouldStopCallback != null && Boolean.TRUE.equals(shouldStopCallback.get())) {
-                    progressCallback.accept("用户取消投递", 0, 0);
+                if (!canStartAttempt()) {
+                    progressCallback.accept("任务已停止或达到本轮名额", 0, 0);
                     return;
                 }
                 // 滚动加载期间 Boss 会频繁增删 frame，Playwright 派发这些事件时可能
@@ -328,8 +337,8 @@ public class Boss {
             int count = cards.count();
             for (int i = 0; i < count; i++) {
                 // 检查是否需要停止
-                if (shouldStopCallback != null && Boolean.TRUE.equals(shouldStopCallback.get())) {
-                    progressCallback.accept("用户取消投递", i, count);
+                if (!canStartAttempt()) {
+                    progressCallback.accept("任务已停止或达到本轮名额", i, count);
                     return;
                 }
 
@@ -451,6 +460,7 @@ public class Boss {
                 if (resumeSubmission(keyword, job)) {
                     postCount++;
                 }
+                if (!canStartAttempt()) return;
 
                 // 为避免点击下面的卡片触发页面刷新：在点击5个卡片之后，每次点击后适度下滑
                 try {
@@ -1003,7 +1013,7 @@ public class Boss {
     @SneakyThrows
     private boolean resumeSubmission(String keyword, Job job) {
         // 若收到停止指令，直接短路返回
-        if (shouldStopCallback != null && Boolean.TRUE.equals(shouldStopCallback.get())) {
+        if (!canStartAttempt()) {
             log.info("停止指令已触发，跳过投递 | 公司：{} | 岗位：{}", job.getCompanyName(), job.getJobName());
             return false;
         }
@@ -1078,7 +1088,7 @@ public class Boss {
                 }
             }
             BossChatNavigator.Chat chat = navigator.open(chatBtn.first(), repeatChat,
-                    Boolean.TRUE.equals(config.getAllowRepeatChat()), shouldStopCallback, 20_000);
+                    Boolean.TRUE.equals(config.getAllowRepeatChat()), shouldStopCallback, reserveAttemptCallback, 20_000);
             if (chat == null) return false;
             detailPage = chat.page();
             repeatChat = chat.repeat();
@@ -1096,7 +1106,7 @@ public class Boss {
             String aiMessage = null;
             if (!repeatChat && Boolean.TRUE.equals(config.getEnableAI())) {
                 String jd = job.getJobInfo();
-                if (jd != null && !jd.isEmpty()) {
+                if (jd != null && !jd.isBlank()) {
                     AiMessageDecision decision = generateAiMessage(keyword, job.getJobName(), jd);
                     if (decision.skipCurrentJob()) {
                         log.info("AI返回false，跳过当前岗位投递 | 公司：{} | 岗位：{}",
@@ -1109,9 +1119,19 @@ public class Boss {
                     }
                     aiMessage = decision.message();
                 }
+                else {
+                    log.warn("AI打招呼未执行：岗位描述为空，使用默认打招呼语 | 岗位：{}", job.getJobName());
+                    if (progressCallback != null) progressCallback.accept("岗位描述为空，AI未执行，使用默认打招呼语", 0, 0);
+                }
             }
-            String message = repeatChat ? repeatMessage : (isValidString(aiMessage) ? aiMessage : config.getSayHi());
+            String message = repeatChat ? repeatMessage : (aiMessage != null && !aiMessage.isBlank() ? aiMessage : config.getSayHi());
+            if (message == null || message.isBlank()) {
+                log.warn("打招呼语为空，跳过岗位：{}", job.getJobName());
+                try { detailPage.close(); } catch (Exception ignore) {}
+                return false;
+            }
 
+            if (shouldStopCallback != null && Boolean.TRUE.equals(shouldStopCallback.get())) return false;
             // 6. 输入打招呼语
             Locator input = inputLocator.first();
             input.click();
@@ -1126,6 +1146,7 @@ public class Boss {
             // 7. 点击发送按钮（div.send-message 或 button.btn-send）
             Locator sendText = detailPage.locator("div.send-message, button[type='send'].btn-send, button.btn-send");
             boolean sendSuccess = false;
+            if (shouldStopCallback != null && Boolean.TRUE.equals(shouldStopCallback.get())) return false;
             if (sendText.count() > 0) {
                 sendText.first().click();
                 PlaywrightUtil.sleep(1);
@@ -1136,7 +1157,8 @@ public class Boss {
 
             // 8. 发送图片简历（可选）
             boolean imgResume = false;
-            if (sendSuccess && Boolean.TRUE.equals(config.getSendImgResume())) {
+            if (sendSuccess && Boolean.TRUE.equals(config.getSendImgResume())
+                    && (shouldStopCallback == null || !Boolean.TRUE.equals(shouldStopCallback.get()))) {
                 imgResume = sendImageResume(detailPage);
             }
 
@@ -1286,6 +1308,7 @@ public class Boss {
             JSONObject beforeState = readOwnImageMessageState(page);
             int imageMessageCountBefore = beforeState.optInt("imageCount", 0);
 
+            if (shouldStopCallback != null && Boolean.TRUE.equals(shouldStopCallback.get())) return false;
             imageInput.setInputFiles(imagePath);
             log.info("已选择图片简历，等待 Boss 确认发送：{}", imagePath.getFileName());
 
@@ -1695,17 +1718,17 @@ public class Boss {
     private record AiMessageDecision(boolean skipCurrentJob, String message) {}
 
     private AiMessageDecision generateAiMessage(String keyword, String jobName, String jd) {
-        AiEntity aiConfig = aiService.getAiConfig();
-        String introduce = (aiConfig != null && aiConfig.getIntroduce() != null) ? aiConfig.getIntroduce() : "";
-        String prompt = (aiConfig != null) ? aiConfig.getPrompt() : null;
-
-        String requestMessage = (prompt != null)
-                ? String.format(prompt, introduce, keyword, jobName, jd, config.getSayHi())
-                : buildDefaultPrompt(introduce, keyword, jobName, jd);
-
         try {
+            AiEntity aiConfig = aiService.getAiConfig();
+            String introduce = (aiConfig != null && aiConfig.getIntroduce() != null) ? aiConfig.getIntroduce() : "";
+            String prompt = (aiConfig != null) ? aiConfig.getPrompt() : null;
+            String requestMessage = (prompt != null && !prompt.isBlank())
+                    ? String.format(prompt, introduce, keyword, jobName, jd, config.getSayHi())
+                    : buildDefaultPrompt(introduce, keyword, jobName, jd);
             String result = aiService.sendRequest(requestMessage);
-            if (result == null) {
+            if (result == null || result.isBlank()) {
+                log.warn("AI返回空内容，使用默认打招呼语");
+                if (progressCallback != null) progressCallback.accept("AI返回空内容，使用默认打招呼语", 0, 0);
                 return new AiMessageDecision(false, config.getSayHi());
             }
             if (isAiRejectResponse(result)) {
@@ -1714,6 +1737,7 @@ public class Boss {
             return new AiMessageDecision(false, result);
         } catch (Exception e) {
             log.warn("AI请求失败，使用原有打招呼语: {}", e.getMessage());
+            if (progressCallback != null) progressCallback.accept("AI打招呼失败，使用默认打招呼语，请查看运行日志", 0, 0);
             return new AiMessageDecision(false, config.getSayHi());
         }
     }
@@ -1811,6 +1835,7 @@ public class Boss {
         // 最多等待5分钟（防呆，防止死循环）
         long start = System.currentTimeMillis();
         while (true) {
+            if (shouldStopCallback != null && Boolean.TRUE.equals(shouldStopCallback.get())) return;
             String url = page.url();
             if (isSecurityVerifyUrl(url)) {
                 progressCallback.accept("请手动完成Boss直聘滑块验证，通过后在控制台回车继续...", 0, 0);

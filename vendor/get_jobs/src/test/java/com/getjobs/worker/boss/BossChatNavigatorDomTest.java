@@ -70,7 +70,7 @@ class BossChatNavigatorDomTest {
     @Test void firstContactCanStillUseInlineChatWithoutNavigation() {
         page.setContent("<button id='start' onclick=\"document.querySelector('#mount').innerHTML=&#34;&lt;textarea class='input-area'&gt;&lt;/textarea&gt;&#34;\">立即沟通</button><div id='mount'></div>");
         try (var navigator = new BossChatNavigator(page)) {
-            var chat = navigator.open(page.locator("#start"), false, false, null, 3_000);
+            var chat = navigator.open(page.locator("#start"), false, false, null, null, 3_000);
             assertNotNull(chat);
             assertFalse(chat.repeat());
             assertEquals(page, chat.page());
@@ -82,7 +82,7 @@ class BossChatNavigatorDomTest {
     void entersReadyChatInSameTabOrPopup(boolean popup, boolean modal) {
         fixture(popup, modal, true, true);
         try (var navigator = new BossChatNavigator(page)) {
-            var chat = navigator.open(page.locator("#job-button"), true, true, null, 5_000);
+            var chat = navigator.open(page.locator("#job-button"), true, true, null, null, 5_000);
             assertNotNull(chat);
             assertTrue(chat.repeat());
             assertEquals("http://getjobs.test/chat", chat.page().url());
@@ -95,7 +95,7 @@ class BossChatNavigatorDomTest {
     @Test void confirmationDoesNotChangeFirstContactIntoRepeatChat() {
         fixture(false, true, true, true);
         try (var navigator = new BossChatNavigator(page)) {
-            var chat = navigator.open(page.locator("#job-button"), false, true, null, 5_000);
+            var chat = navigator.open(page.locator("#job-button"), false, true, null, null, 5_000);
             assertNotNull(chat);
             assertFalse(chat.repeat());
         }
@@ -104,7 +104,7 @@ class BossChatNavigatorDomTest {
     @Test void disabledSwitchDoesNotConfirmModal() {
         fixture(false, true, true, true);
         try (var navigator = new BossChatNavigator(page)) {
-            assertNull(navigator.open(page.locator("#job-button"), true, false, null, 3_000));
+            assertNull(navigator.open(page.locator("#job-button"), true, false, null, null, 3_000));
             assertEquals(0, page.locator("#confirm-dialog").count());
             assertEquals("http://getjobs.test/job", page.url());
         }
@@ -113,7 +113,7 @@ class BossChatNavigatorDomTest {
     @Test void existingChatMustLeaveJobPageEvenIfAnInputIsVisible() {
         page.setContent("<button id='start'>继续沟通</button><textarea class='input-area'></textarea>");
         try (var navigator = new BossChatNavigator(page)) {
-            assertNull(navigator.open(page.locator("#start"), true, true, null, 400));
+            assertNull(navigator.open(page.locator("#start"), true, true, null, null, 400));
         }
     }
 
@@ -124,7 +124,7 @@ class BossChatNavigatorDomTest {
                 <div id="mount"></div>
                 """);
         try (var navigator = new BossChatNavigator(page)) {
-            assertNull(navigator.open(page.locator("#start"), false, true, null, 2_100));
+            assertNull(navigator.open(page.locator("#start"), false, true, null, null, 2_100));
             assertEquals(1, page.locator(".greet-boss-dialog").count());
             assertNotEquals(true, page.evaluate("() => window.confirmClicked === true"));
         }
@@ -136,27 +136,34 @@ class BossChatNavigatorDomTest {
                 .setBody("<div id='mount'></div><script>setTimeout(()=>{document.querySelector('#mount').innerHTML=\"<textarea class='input-area'></textarea>\"},1400)</script>")));
         page.setContent("<button id='start' onclick=\"location.href='http://getjobs.test/slow-chat'\">继续沟通</button>");
         try (var navigator = new BossChatNavigator(page)) {
-            assertNotNull(navigator.open(page.locator("#start"), true, true, null, 3_000));
+            assertNotNull(navigator.open(page.locator("#start"), true, true, null, null, 3_000));
         }
     }
 
     @Test void doesNotUseOldInputWhenNavigationFails() {
         fixture(false, true, false, true);
         try (var navigator = new BossChatNavigator(page)) {
-            assertNull(navigator.open(page.locator("#job-button"), true, true, null, 800));
+            assertNull(navigator.open(page.locator("#job-button"), true, true, null, null, 800));
         }
     }
 
     @Test void noInputOrStopDoesNotReturnReadyChat() {
         fixture(true, true, true, false);
         try (var navigator = new BossChatNavigator(page)) {
-            assertNull(navigator.open(page.locator("#job-button"), true, true, null, 1_000));
+            assertNull(navigator.open(page.locator("#job-button"), true, true, null, null, 1_000));
         }
         assertTrue(context.pages().isEmpty());
         page = context.newPage();
         fixture(false, true, true, true);
         try (var navigator = new BossChatNavigator(page)) {
-            assertNull(navigator.open(page.locator("#job-button"), true, true, () -> true, 1_000));
+            assertNull(navigator.open(page.locator("#job-button"), true, true, () -> true, null, 1_000));
+        }
+    }
+    @Test void deniedAttemptDoesNotClickEntry() {
+        page.setContent("<button id='start' onclick=\"window.clicked=true\">立即沟通</button>");
+        try (var navigator = new BossChatNavigator(page)) {
+            assertNull(navigator.open(page.locator("#start"), false, false, null, () -> false, 1_000));
+            assertNotEquals(true, page.evaluate("() => window.clicked === true"));
         }
     }
 }

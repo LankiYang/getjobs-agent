@@ -15,7 +15,6 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
 
 /**
  * 猎聘控制器
@@ -80,20 +79,13 @@ public class LiepinController {
                 return ResponseEntity.badRequest().body(response);
             }
 
-            // 检查是否已有任务在运行
-            if (liepinJobService.isRunning()) {
+            if (!liepinJobService.startDelivery(progressMessage ->
+                    log.info("[{}] {}", progressMessage.getPlatform(), progressMessage.getMessage()))) {
                 response.put("success", false);
                 response.put("message", "猎聘任务已在运行中，请等待当前任务完成");
                 response.put("status", "running");
                 return ResponseEntity.badRequest().body(response);
             }
-
-            // 异步启动新任务
-            CompletableFuture.runAsync(() -> {
-                liepinJobService.executeDelivery(progressMessage -> {
-                    log.info("[{}] {}", progressMessage.getPlatform(), progressMessage.getMessage());
-                });
-            });
 
             response.put("success", true);
             response.put("message", "猎聘任务启动成功");

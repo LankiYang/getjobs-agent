@@ -33,11 +33,14 @@ final class BossChatNavigator implements AutoCloseable {
         origin.onPopup(popupListener);
     }
 
-    Chat open(Locator button, boolean repeat, boolean allowRepeat, Supplier<Boolean> stop, long timeoutMs) {
+    Chat open(Locator button, boolean repeat, boolean allowRepeat, Supplier<Boolean> stop,
+              Supplier<Boolean> reserveAttempt, long timeoutMs) {
         if (stop != null && Boolean.TRUE.equals(stop.get())) return null;
         if (repeat && !allowRepeat) return null;
         long deadline = System.nanoTime() + timeoutMs * 1_000_000L;
         String entryUrl = origin.url();
+        // 首次点击可能立即发送平台默认招呼；在点击前原子占用本轮名额。
+        if (reserveAttempt != null && !Boolean.TRUE.equals(reserveAttempt.get())) return null;
         try {
             button.click(new Locator.ClickOptions().setTimeout(Math.min(timeoutMs, 5_000)));
         } catch (PlaywrightException navigationError) {

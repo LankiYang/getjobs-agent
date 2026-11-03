@@ -36,15 +36,38 @@ public class AiService {
      * @return AI 回复文本
      */
     public String sendRequest(String content) {
-        // 读取并校验配置
-        var cfg = configService.getAiConfigs();
-        String baseUrl = cfg.get("BASE_URL");
-        String apiKey = cfg.get("API_KEY");
-        String model = cfg.get("MODEL");
+        return sendRequest(content, System.getenv());
+    }
+
+    String sendRequest(String content, java.util.Map<String, String> env) {
+        String baseUrl = configService.getConfigValue("BASE_URL");
+        String apiKey = configService.getConfigValue("API_KEY");
+        String model = configService.getConfigValue("MODEL");
+        boolean hasOwnConfig = !isBlank(baseUrl) || !isBlank(apiKey) || !isBlank(model);
+        if (!hasOwnConfig) {
+            String provider = env.getOrDefault("AGENT_PROVIDER", "openai").trim();
+            if ("anthropic".equalsIgnoreCase(provider)) {
+                String sharedBase = firstNonBlank(env.get("AGENT_ANTHROPIC_BASE_URL"), env.get("ANTHROPIC_BASE_URL"), "http://127.0.0.1:15721");
+                String sharedModel = firstNonBlank(env.get("AGENT_MODEL"), "deepseek-v4.1-flash-1017");
+                String token = firstNonBlank(env.get("AGENT_API_KEY"), env.get("ANTHROPIC_AUTH_TOKEN"), "");
+                return sendAnthropicRequest(content, sharedBase, token, sharedModel,
+                        firstNonBlank(env.get("AGENT_MAX_TOKENS"), "4096"));
+            }
+            if (!"openai".equalsIgnoreCase(provider)) {
+                throw new IllegalStateException("不支持的对话模型提供方: " + provider);
+            }
+            baseUrl = env.get("AGENT_BASE_URL");
+            apiKey = firstNonBlank(env.get("AGENT_API_KEY"), "");
+            model = env.get("AGENT_MODEL");
+            if (isBlank(baseUrl) || isBlank(model)) {
+                throw new IllegalStateException("未配置 AI 模型：请填写独立配置，或配置控制面对话模型");
+            }
+        } else if (isBlank(baseUrl) || isBlank(apiKey) || isBlank(model)) {
+            throw new IllegalStateException("独立 AI 配置不完整：需要 BASE_URL、API_KEY 和 MODEL");
+        }
         // 根据模型类型选择兼容的端点（部分“推理/Reasoning”模型需要使用 Responses API）
-        String endpoint = isResponsesModel(model)
-                ? buildResponsesEndpoint(baseUrl)
-                : buildChatCompletionsEndpoint(baseUrl);
+        String endpoint = !hasOwnConfig ? normalizeBaseUrl(baseUrl) + "/chat/completions"
+                : isResponsesModel(model) ? buildResponsesEndpoint(baseUrl) : buildChatCompletionsEndpoint(baseUrl);
 
         int timeoutInSeconds = 60;
 
@@ -94,19 +117,7 @@ public class AiService {
 
                 String responseContent;
                 if (endpoint.endsWith("/responses")) {
-                    // Responses API：优先读取 output_text
-                    responseContent = responseObject.optString("output_text", null);
-                    if (responseContent == null || responseContent.isEmpty()) {
-                        // 兜底：尝试从通用 choices/message 结构读取（部分代理/兼容层会返回该结构）
-                        try {
-                            JSONObject messageObject = responseObject.getJSONArray("choices")
-                                    .getJSONObject(0)
-                                    .getJSONObject("message");
-                            responseContent = messageObject.getString("content");
-                        } catch (Exception ignore) {
-                            responseContent = response.body(); // 最后兜底：返回原始文本，避免空值
-                        }
-                    }
+                    responseContent = extractResponsesText(responseObject);
                 } else {
                     // Chat Completions API
                     JSONObject messageObject = responseObject.getJSONArray("choices")
@@ -143,6 +154,54 @@ public class AiService {
         } catch (Exception e) {
             log.error("调用AI服务异常", e);
             throw e instanceof RuntimeException ? (RuntimeException) e : new RuntimeException(e);
+        }
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
+    }
+
+    private static String firstNonBlank(String... values) {
+        for (String value : values) if (!isBlank(value)) return value;
+        return "";
+    }
+
+    String sendAnthropicRequest(String content, String baseUrl, String token, String model, String maxTokens) {
+        JSONObject payload = new JSONObject();
+        payload.put("model", model);
+        payload.put("max_tokens", Integer.parseInt(maxTokens));
+        payload.put("messages", new JSONArray().put(new JSONObject().put("role", "user").put("content", content)));
+        HttpRequest.Builder builder = HttpRequest.newBuilder()
+                .uri(URI.create(normalizeBaseUrl(baseUrl) + "/v1/messages"))
+                .timeout(Duration.ofSeconds(180))
+                .header("Content-Type", "application/json")
+                .header("anthropic-version", "2023-06-01");
+        if (!isBlank(token) && !"PROXY_MANAGED".equals(token)) {
+            builder.header("Authorization", "Bearer " + token);
+        }
+        HttpRequest request = builder.POST(HttpRequest.BodyPublishers.ofString(payload.toString())).build();
+        try {
+            HttpResponse<String> response = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(60)).build()
+                    .send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() != 200) {
+                throw new IllegalStateException("Anthropic AI请求失败，状态码: " + response.statusCode());
+            }
+            JSONArray blocks = new JSONObject(response.body()).optJSONArray("content");
+            StringBuilder result = new StringBuilder();
+            if (blocks != null) {
+                for (int i = 0; i < blocks.length(); i++) {
+                    JSONObject block = blocks.optJSONObject(i);
+                    if (block != null && "text".equals(block.optString("type"))) {
+                        result.append(block.optString("text", ""));
+                    }
+                }
+            }
+            return result.toString();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Anthropic AI请求中断", e);
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException("Anthropic AI连接失败", e);
         }
     }
 
@@ -223,20 +282,7 @@ public class AiService {
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() == 200) {
                 JSONObject resp = new JSONObject(response.body());
-                String outputText = resp.optString("output_text", null);
-                if (outputText != null && !outputText.isEmpty()) {
-                    return outputText;
-                }
-                // 兜底解析：部分兼容层可能返回 choices/message 结构
-                try {
-                    JSONObject messageObject = resp.getJSONArray("choices")
-                            .getJSONObject(0)
-                            .getJSONObject("message");
-                    return messageObject.getString("content");
-                } catch (Exception ignore) {
-                }
-                // 无法解析则直接返回原始体，避免空值中断流程
-                return response.body();
+                return extractResponsesText(resp);
             }
             log.error("Responses API 调用失败: status={}, endpoint={}, body={}", response.statusCode(), endpoint, response.body());
             throw new RuntimeException("AI请求失败，状态码: " + response.statusCode() + ", 详情: " + response.body());
@@ -244,6 +290,33 @@ public class AiService {
             log.error("Responses API 调用异常", e);
             throw e instanceof RuntimeException ? (RuntimeException) e : new RuntimeException(e);
         }
+    }
+
+    /** Responses API 返回的文本位于 output 中的 message/content/output_text 项。 */
+    static String extractResponsesText(JSONObject response) {
+        String outputText = response.optString("output_text", null);
+        if (outputText != null && !outputText.isBlank()) return outputText;
+        JSONArray output = response.optJSONArray("output");
+        StringBuilder text = new StringBuilder();
+        if (output != null) {
+            for (int i = 0; i < output.length(); i++) {
+                JSONObject item = output.optJSONObject(i);
+                if (item == null || !"message".equals(item.optString("type"))) continue;
+                JSONArray content = item.optJSONArray("content");
+                if (content == null) continue;
+                for (int j = 0; j < content.length(); j++) {
+                    JSONObject part = content.optJSONObject(j);
+                    if (part != null && "output_text".equals(part.optString("type"))) {
+                        text.append(part.optString("text", ""));
+                    }
+                }
+            }
+        }
+        if (!text.toString().isBlank()) return text.toString();
+        JSONArray choices = response.optJSONArray("choices");
+        JSONObject choice = choices == null ? null : choices.optJSONObject(0);
+        JSONObject message = choice == null ? null : choice.optJSONObject("message");
+        return message == null ? null : message.optString("content", null);
     }
 
     // ================= 合并的 AI 配置管理方法 =================

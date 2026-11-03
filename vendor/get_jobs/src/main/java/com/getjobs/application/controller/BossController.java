@@ -1,6 +1,7 @@
 package com.getjobs.application.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.getjobs.application.service.CookieService;
 import com.getjobs.worker.dto.JobProgressMessage;
 import com.getjobs.worker.manager.PlaywrightManager;
@@ -19,7 +20,6 @@ import java.io.IOException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
@@ -68,34 +68,35 @@ public class BossController {
 
     /** POST - 启动Boss投递任务 */
     @PostMapping("/execute")
-    public ResponseEntity<Map<String, Object>> executeBoss() {
-        if (bossJobService.isRunning()) {
-            return ResponseEntity.ok(Map.of(
-                    "status", "already_running",
-                    "message", "Boss投递任务已在运行中"
-            ));
-        }
-
-        CompletableFuture.runAsync(() -> bossJobService.executeDelivery(this::sendBossProgress));
-
-        return ResponseEntity.ok(Map.of(
-                "status", "started",
-                "message", "Boss投递任务已启动"
-        ));
+    public ResponseEntity<Map<String, Object>> executeBoss(@RequestBody(required = false) JsonNode body) {
+        return startBoss(body);
     }
 
     /** POST - 启动Boss投递任务（前端使用的接口）*/
     @PostMapping("/start")
-    public ResponseEntity<Map<String, Object>> startBoss() {
+    public ResponseEntity<Map<String, Object>> startBoss(@RequestBody(required = false) JsonNode body) {
         Map<String, Object> response = new HashMap<>();
         try {
+            Integer maxCount = null;
+            if (body != null && !body.isNull()) {
+                if (!body.isObject() || (body.has("maxCount") &&
+                        (!body.get("maxCount").isIntegralNumber() || !body.get("maxCount").canConvertToInt()
+                                || body.get("maxCount").intValue() <= 0))) {
+                    return ResponseEntity.badRequest().body(Map.of("success", false, "status", "invalid_limit",
+                            "message", "maxCount 必须为正整数"));
+                }
+                if (body.has("maxCount")) maxCount = body.get("maxCount").intValue();
+            }
             if (!playwrightManager.isLoggedIn("boss")) {
                 response.put("success", false);
                 response.put("message", "请先登录Boss直聘");
                 response.put("status", "not_logged_in");
                 return ResponseEntity.badRequest().body(response);
             }
-            if (bossJobService.isRunning()) {
+            if (!bossJobService.startDelivery(maxCount, pm -> {
+                sendBossProgress(pm);
+                log.info("[{}] {}", pm.getPlatform(), pm.getMessage());
+            })) {
                 long seconds = bossJobService.runningForMillis() / 1000;
                 response.put("success", false);
                 response.put("message", String.format(
@@ -105,13 +106,10 @@ public class BossController {
                 response.put("runningSeconds", seconds);
                 return ResponseEntity.badRequest().body(response);
             }
-            CompletableFuture.runAsync(() -> bossJobService.executeDelivery(pm -> {
-                sendBossProgress(pm);
-                log.info("[{}] {}", pm.getPlatform(), pm.getMessage());
-            }));
             response.put("success", true);
             response.put("message", "Boss任务启动成功");
             response.put("status", "started");
+            response.put("maxCount", maxCount);
             log.info("通过API启动Boss任务成功");
             return ResponseEntity.ok(response);
         } catch (Exception e) {

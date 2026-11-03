@@ -8,7 +8,8 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.net.URI;
+import com.getjobs.worker.service.BrowserNetworkPolicy;
+import java.nio.file.Paths;
 import java.util.Map;
 import java.util.Optional;
 
@@ -27,7 +28,8 @@ public class BrowserController {
     @PostMapping("/open")
     public ResponseEntity<?> open(@RequestBody Map<String, String> body) {
         String url = body.getOrDefault("url", "").trim();
-        String error = validateUrl(url);
+        String error = url.isEmpty() ? "url 不能为空" :
+                (BrowserNetworkPolicy.allows(url) ? null : "URL 无效或目标不是公网地址");
         if (error != null) {
             return ResponseEntity.badRequest().body(Map.of("message", error));
         }
@@ -166,28 +168,13 @@ public class BrowserController {
         if (path.isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("message", "path 不能为空"));
         }
-        java.nio.file.Path file;
         try {
-            file = java.nio.file.Paths.get(path).toAbsolutePath().normalize();
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body(Map.of("message", "文件路径不正确"));
+            var file = TrustedBrowserUpload.read(Paths.get(System.getProperty("user.dir")), path);
+            browser.uploadFile(body.get("ref"), body.get("selector"), file);
+            return ResponseEntity.ok(Map.of("ok", true, "file", file.name));
+        } catch (java.io.IOException | IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("message", "文件不存在、不可读取或不在可信简历目录"));
         }
-        String lower = file.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
-        if (!lower.matches(".*\\.(pdf|doc|docx|png|jpg|jpeg)$")) {
-            return ResponseEntity.badRequest().body(Map.of("message", "只支持 pdf/doc/docx/png/jpg 文件"));
-        }
-        try {
-            if (!java.nio.file.Files.isRegularFile(file)) {
-                return ResponseEntity.badRequest().body(Map.of("message", "文件不存在"));
-            }
-            if (java.nio.file.Files.size(file) > 20L * 1024 * 1024) {
-                return ResponseEntity.badRequest().body(Map.of("message", "文件不能超过 20MB"));
-            }
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body(Map.of("message", "无法读取文件"));
-        }
-        browser.uploadFile(body.get("ref"), body.get("selector"), file.toString());
-        return ResponseEntity.ok(Map.of("ok", true, "file", file.getFileName().toString()));
     }
 
     @GetMapping(value = "/screenshot", produces = MediaType.IMAGE_PNG_VALUE)
@@ -226,41 +213,4 @@ public class BrowserController {
         }
     }
 
-    private static String validateUrl(String url) {
-        if (url.isEmpty()) {
-            return "url 不能为空";
-        }
-        try {
-            URI uri = URI.create(url);
-            String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase();
-            if (!scheme.equals("http") && !scheme.equals("https")) {
-                return "只支持 http/https 地址";
-            }
-            String host = uri.getHost() == null ? "" : uri.getHost().toLowerCase();
-            if (host.isEmpty()) {
-                return "URL 缺少主机名";
-            }
-            if (host.equals("localhost") || host.endsWith(".local") || host.equals("::1")
-                    || host.startsWith("127.") || host.startsWith("10.")
-                    || host.startsWith("192.168.") || host.startsWith("169.254.")) {
-                return "不允许访问本机或内网地址";
-            }
-            if (host.startsWith("172.")) {
-                String[] parts = host.split("\\.");
-                if (parts.length > 1) {
-                    try {
-                        int second = Integer.parseInt(parts[1]);
-                        if (second >= 16 && second <= 31) {
-                            return "不允许访问内网地址";
-                        }
-                    } catch (NumberFormatException ignored) {
-                        // 非数字主机名，按外网处理
-                    }
-                }
-            }
-            return null;
-        } catch (Exception e) {
-            return "URL 格式不正确";
-        }
-    }
 }
