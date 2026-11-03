@@ -24,6 +24,14 @@ CREATE TABLE IF NOT EXISTS runners (
     started_at TEXT,
     FOREIGN KEY(user_id) REFERENCES users(id)
 );
+CREATE TABLE IF NOT EXISTS task_start_reservations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    channel TEXT NOT NULL,
+    observed_running INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY(user_id) REFERENCES users(id)
+);
+
 
 CREATE TABLE IF NOT EXISTS agent_profiles (
     user_id INTEGER PRIMARY KEY,
@@ -44,6 +52,23 @@ CREATE TABLE IF NOT EXISTS agent_messages (
 CREATE INDEX IF NOT EXISTS idx_agent_messages_session
     ON agent_messages(user_id, session_id, id);
 
+CREATE TABLE IF NOT EXISTS chat_files (
+    id TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(user_id) REFERENCES users(id)
+);
+CREATE TABLE IF NOT EXISTS agent_message_files (
+    message_id INTEGER NOT NULL,
+    file_id TEXT NOT NULL,
+    PRIMARY KEY(message_id, file_id),
+    FOREIGN KEY(message_id) REFERENCES agent_messages(id),
+    FOREIGN KEY(file_id) REFERENCES chat_files(id)
+);
+
 CREATE TABLE IF NOT EXISTS custom_sites (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
@@ -54,6 +79,19 @@ CREATE TABLE IF NOT EXISTS custom_sites (
     created_at TEXT NOT NULL,
     UNIQUE(user_id, url)
 );
+CREATE TABLE IF NOT EXISTS work_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('task', 'event')),
+    fields TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(user_id) REFERENCES users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_work_items_owner_kind
+    ON work_items(user_id, kind, id);
+
 """
 
 

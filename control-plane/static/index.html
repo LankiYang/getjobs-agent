@@ -362,6 +362,14 @@
   }
   .composer textarea:focus { outline: none; border-bottom: 2px solid var(--ink); }
   .composer textarea::placeholder { color: #9a9c93; }
+  .composer { flex-wrap: wrap; }
+  .composer textarea { min-width: 120px; }
+  .attachment-list { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; }
+  .attachment { border: 1px solid var(--line-strong); padding: 6px 8px; font-size: 12px; max-width: 220px; overflow-wrap: anywhere; }
+  .attachment img { display: block; max-width: 150px; max-height: 110px; object-fit: contain; margin-bottom: 4px; }
+  .attachment button { margin-left: 6px; }
+  .attachment a { color: var(--seal); cursor: pointer; }
+  .attachment-error { color: var(--seal); }
 
   /* ---------- modal ---------- */
   .modal {
@@ -396,6 +404,9 @@
     outline: none; border-color: var(--ink);
   }
   .settings-section textarea + h4 { margin-top: 14px; }
+  .settings-section summary { cursor: pointer; font-family: var(--serif); font-size: 15px; font-weight: 700; }
+  .settings-section details[open] summary { margin-bottom: 10px; }
+  .settings-section summary:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
   .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
   @media (max-width: 860px) { .form-grid { grid-template-columns: 1fr; } }
   .settings-actions {
@@ -596,7 +607,7 @@
     </div>
     <p class="lede">把投递这件事，<br />交给<em>台账</em>。</p>
     <p class="lede-note">
-      每个账号一套独立的浏览器环境与登录态。<br />
+      每个账号拥有独立的浏览器登录态。<br />
       你只管说方向，代理负责筛岗位、打招呼、记账。
     </p>
   </section>
@@ -637,24 +648,12 @@
     </div>
     <span id="who" class="who"></span>
     <button id="newChatBtn" class="linkish">新对话</button>
+    <button id="settingsBtn" class="linkish" type="button">设置</button>
     <button id="logoutBtn" class="linkish">退出</button>
   </header>
 
   <div class="layout">
     <aside class="side">
-      <div class="side-block">
-        <h3>运行环境</h3>
-        <div class="status-line">
-          <span id="runnerDot" class="dot"></span>
-          <span id="runnerText">未启动</span>
-          <span id="runnerPort" class="port"></span>
-        </div>
-        <div class="side-actions">
-          <button id="startRunner" class="btn tiny">启动</button>
-          <button id="stopRunner" class="btn ghost tiny">停止</button>
-        </div>
-        <div id="runnerHint" class="side-hint"></div>
-      </div>
 
       <div class="side-block">
         <h3>渠道</h3>
@@ -703,7 +702,11 @@
       </div>
 
       <form id="composer" class="composer">
+        <div id="pendingAttachments" class="attachment-list" aria-live="polite"></div>
+        <input id="chatFiles" type="file" accept="image/*,.pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple hidden />
+        <button id="attachBtn" class="btn ghost" type="button">添加附件</button>
         <textarea id="input" rows="1" placeholder="例如：帮我投大模型方向，城市上海"></textarea>
+        <button id="cancelChatBtn" class="btn ghost hidden" type="button">停止生成</button>
         <button id="sendBtn" class="btn" type="submit">发送</button>
       </form>
       </div>
@@ -711,9 +714,9 @@
       <div id="viewDash" class="view hidden">
         <div class="dash-scroll">
           <div id="dashEmpty" class="dash-empty hidden">
-            <h2>还没有运行环境</h2>
-            <p>启动运行环境后，这里会记录每一次投递。</p>
-            <button id="dashStart" class="btn tiny" type="button">启动运行环境</button>
+            <h2 id="dashEmptyTitle">正在准备看板…</h2>
+            <p id="dashEmptyHint">请稍候。</p>
+            <button id="dashStart" class="btn tiny hidden" type="button">重试</button>
           </div>
 
           <div id="dashBody">
@@ -799,10 +802,49 @@
 <div id="profileModal" class="modal hidden">
   <div class="modal-card wide">
     <h3>资料与简历</h3>
-    <p class="hint">AI 用这些信息生成打招呼语；图片简历会在投递时自动发送到 Boss。</p>
+    <p class="hint">设置 Boss 打招呼、图片简历和网申资料。图片简历是否发送由下方开关决定。</p>
 
     <section class="settings-section">
-      <h4>网申资料</h4>
+      <h4>打招呼与发送</h4>
+      <label class="mini-label" for="sayHi">默认打招呼语</label>
+      <input id="sayHi" class="text-input" />
+      <p class="mini-hint" style="margin:4px 0 8px">未启用 AI、未获取到岗位描述，或 AI 生成失败、内容为空时，使用默认打招呼语作为后备。</p>
+      <label class="check"><input type="checkbox" id="enableAi" /> 用 AI 生成打招呼语</label>
+      <label class="check"><input type="checkbox" id="sendImgResume" /> 投递时自动发送图片简历</label>
+      <div class="settings-actions">
+        <span id="behaviorHint" class="mini-hint"></span>
+        <button id="saveBehavior" class="btn tiny">保存</button>
+      </div>
+    </section>
+    <section class="settings-section">
+      <h4><label for="aiIntroduce">技能介绍</label></h4>
+      <p id="aiIntroduceHelp" class="mini-hint" style="margin:-4px 0 10px">填写你的技能和经历，供 AI 结合岗位信息生成打招呼语。</p>
+      <textarea id="aiIntroduce" rows="4" aria-describedby="aiIntroduceHelp" placeholder="例如：5 年 Java 后端，做过支付与高并发系统，熟悉 Spring Cloud。"></textarea>
+      <h4><label for="aiPrompt">打招呼提示词</label></h4>
+      <p id="aiPromptHelp" class="mini-hint" style="margin:-4px 0 10px">告诉 AI 如何生成话术。可用 5 个 %s 依次插入技能介绍、搜索关键词、岗位名称、职位描述和默认话术；文字中的百分号写成 %%。</p>
+      <textarea id="aiPrompt" rows="3" aria-describedby="aiPromptHelp" placeholder="例如：根据技能介绍 %s、搜索关键词 %s、岗位名称 %s、职位描述 %s 和默认话术 %s，生成简洁的打招呼语。"></textarea>
+      <div class="settings-actions">
+        <span id="aiHint" class="mini-hint"></span>
+        <button id="saveAi" class="btn tiny">保存资料</button>
+      </div>
+    </section>
+
+    <section class="settings-section">
+      <h4>图片简历</h4>
+      <div class="resume-row">
+        <div id="resumeThumb" class="resume-thumb">未上传</div>
+        <div class="resume-meta">
+          <div id="resumeStatus" class="mini-hint">未上传</div>
+          <input type="file" id="resumeFile" accept=".pdf,application/pdf,image/png,image/jpeg,image/gif" class="hidden" />
+          <button id="uploadResume" class="btn ghost tiny">选择简历（PDF / 图片，≤10MB）</button>
+          <span id="resumeHint" class="mini-hint">PDF 会自动转成图片简历</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="settings-section">
+      <details>
+      <summary>网申资料</summary>
       <p class="mini-hint" style="margin:-4px 0 10px">用于自动填写网申表单和生成简历，只填真实信息。</p>
       <div class="form-grid">
         <div><label class="mini-label" for="pfName">姓名</label><input id="pfName" class="text-input" /></div>
@@ -830,44 +872,8 @@
         <button id="savePf" class="btn ghost tiny" type="button">保存资料</button>
         <button id="genResume" class="btn tiny" type="button">生成简历</button>
       </div>
+      </details>
     </section>
-
-    <section class="settings-section">
-      <h4>技能介绍</h4>
-      <textarea id="aiIntroduce" rows="4" placeholder="例如：5 年 Java 后端，做过支付与高并发系统，熟悉 Spring Cloud。"></textarea>
-      <h4>打招呼提示词</h4>
-      <textarea id="aiPrompt" rows="3" placeholder="例如：语气真诚简洁，突出与岗位相关的项目经验，不超过 80 字。"></textarea>
-      <div class="settings-actions">
-        <span id="aiHint" class="mini-hint"></span>
-        <button id="saveAi" class="btn tiny">保存资料</button>
-      </div>
-    </section>
-
-    <section class="settings-section">
-      <h4>图片简历</h4>
-      <div class="resume-row">
-        <div id="resumeThumb" class="resume-thumb">未上传</div>
-        <div class="resume-meta">
-          <div id="resumeStatus" class="mini-hint">未上传</div>
-          <input type="file" id="resumeFile" accept=".pdf,application/pdf,image/png,image/jpeg,image/gif" class="hidden" />
-          <button id="uploadResume" class="btn ghost tiny">选择简历（PDF / 图片，≤10MB）</button>
-          <span id="resumeHint" class="mini-hint">PDF 会自动转成图片简历</span>
-        </div>
-      </div>
-    </section>
-
-    <section class="settings-section">
-      <h4>打招呼与发送</h4>
-      <label class="mini-label" for="sayHi">默认打招呼语</label>
-      <input id="sayHi" class="text-input" />
-      <label class="check"><input type="checkbox" id="enableAi" /> 用 AI 生成打招呼语</label>
-      <label class="check"><input type="checkbox" id="sendImgResume" /> 投递时自动发送图片简历</label>
-      <div class="settings-actions">
-        <span id="behaviorHint" class="mini-hint"></span>
-        <button id="saveBehavior" class="btn tiny">保存</button>
-      </div>
-    </section>
-
     <section class="settings-section">
       <h4>黑名单公司</h4>
       <div id="blacklist" class="blacklist"></div>
@@ -875,11 +881,28 @@
         <input id="blacklistInput" class="text-input" placeholder="公司名称" />
         <button id="addBlacklist" class="btn ghost tiny">添加</button>
       </div>
+      <div id="blacklistHint" class="mini-hint"></div>
     </section>
 
     <div class="modal-actions">
       <button id="closeProfile" class="btn tiny">关闭</button>
     </div>
+  </div>
+</div>
+
+<div id="settingsModal" class="modal hidden">
+  <div class="modal-card">
+    <h3>设置</h3>
+    <section class="settings-section">
+      <h4>运行环境</h4>
+      <div class="status-line"><span id="runnerDot" class="dot"></span><span id="runnerText">未启动</span><span id="runnerPort" class="port"></span></div>
+      <div class="side-actions">
+        <button id="startRunner" class="btn tiny" type="button">启动</button>
+        <button id="stopRunner" class="btn ghost tiny" type="button">停止</button>
+      </div>
+      <div id="runnerHint" class="side-hint"></div>
+    </section>
+    <div class="settings-actions"><button id="closeSettings" class="btn ghost tiny" type="button">关闭</button></div>
   </div>
 </div>
 
@@ -898,7 +921,7 @@
 <div id="qrModal" class="modal hidden">
   <div class="modal-card">
     <h3>Boss 扫码登录</h3>
-    <p class="hint">用 Boss 直聘 App 扫描二维码，登录态只保存在你的运行环境里。</p>
+    <p class="hint">用 Boss 直聘 App 扫描二维码，登录态仅供你的账号使用。</p>
     <div class="qr-frame">
       <img id="qrImg" alt="Boss 登录二维码" />
     </div>
@@ -920,7 +943,12 @@ const state = {
   sessionId: '',
   sessionKey: '',
   busy: false,
+  activeTurn: null,
   runnerRunning: false,
+  runnerStart: null,
+  runnerBusy: false,
+  lastInteraction: 0,
+  heartbeatAbort: null,
   view: 'chat',
   dashPage: 1,
   dashSize: 10,
@@ -931,7 +959,12 @@ const state = {
   eventAbort: null,
   authMode: 'login',
   bossAutoChecked: false,
+  pendingAttachments: [],
+  attachmentURLs: new Set(),
+  attachmentFetches: new Set(),
+  shownReminders: new Map(),
 };
+let lastAuthInteraction = 0;
 if (window.marked) marked.setOptions({ gfm: true, breaks: true });
 const $ = (id) => document.getElementById(id);
 const show = (id, yes) => $(id).classList.toggle('hidden', !yes);
@@ -940,9 +973,10 @@ const setError = (id, message) => { $(id).textContent = message || ''; };
 async function api(path, options = {}) {
   const isForm = options.body instanceof FormData;
   const headers = Object.assign(isForm ? {} : { 'Content-Type': 'application/json' }, options.headers || {});
-  if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
+  const token = state.token;
+  if (token) headers['Authorization'] = 'Bearer ' + token;
   const res = await fetch(path, Object.assign({}, options, { headers }));
-  if (res.status === 401 && state.token) { logout(); throw new Error('登录已过期，请重新登录'); }
+  if (res.status === 401 && token && state.token === token) { logout(); throw new Error('登录已过期，请重新登录'); }
   const text = await res.text();
   let data;
   try { data = text ? JSON.parse(text) : {}; } catch { data = text; }
@@ -958,6 +992,10 @@ async function api(path, options = {}) {
 }
 
 function logout() {
+  if (state.heartbeatAbort) state.heartbeatAbort.abort();
+  state.heartbeatAbort = null;
+  state.lastInteraction = 0;
+  lastAuthInteraction = 0;
   if (state.eventAbort) {
     try { state.eventAbort.abort(); } catch (e) {}
     state.eventAbort = null;
@@ -966,6 +1004,7 @@ function logout() {
   localStorage.removeItem('getjobs_session');
   state.token = '';
   state.user = null;
+  state.shownReminders.clear();
   resetUserUI();
   $('email').value = '';
   $('password').value = '';
@@ -984,7 +1023,139 @@ function bindSuggestions() {
   });
 }
 
+function clearAttachmentResources() {
+  state.pendingAttachments.forEach(item => item.controller?.abort());
+  state.pendingAttachments = [];
+  state.attachmentFetches.forEach(controller => controller.abort());
+  state.attachmentFetches.clear();
+  state.attachmentURLs.forEach(url => URL.revokeObjectURL(url));
+  state.attachmentURLs.clear();
+  $('pendingAttachments').replaceChildren();
+  $('chatFiles').value = '';
+}
+
+function removePendingAttachment(item) {
+  item.controller?.abort();
+  state.pendingAttachments = state.pendingAttachments.filter(entry => entry !== item);
+  if (item.preview) {
+    URL.revokeObjectURL(item.preview);
+    state.attachmentURLs.delete(item.preview);
+  }
+  renderPendingAttachments();
+}
+
+function renderPendingAttachments() {
+  const list = $('pendingAttachments');
+  list.replaceChildren();
+  state.pendingAttachments.forEach(item => {
+    const card = document.createElement('div');
+    card.className = 'attachment';
+    if (item.preview) {
+      const img = document.createElement('img');
+      img.src = item.preview;
+      img.alt = item.file.name;
+      card.appendChild(img);
+    }
+    const label = document.createElement('span');
+    label.textContent = item.file.name + (item.error ? ' · 上传失败：' + item.error : item.uploading ? ' · 上传中…' : ' · 已上传');
+    if (item.error) label.className = 'attachment-error';
+    card.appendChild(label);
+    if (item.error) {
+      const retry = document.createElement('button');
+      retry.type = 'button'; retry.textContent = '重试';
+      retry.onclick = () => uploadChatAttachment(item);
+      card.appendChild(retry);
+    }
+    const remove = document.createElement('button');
+    remove.type = 'button'; remove.textContent = item.uploading ? '取消' : '移除';
+    remove.onclick = () => removePendingAttachment(item);
+    card.appendChild(remove);
+    list.appendChild(card);
+  });
+}
+
+async function uploadChatAttachment(item) {
+  item.controller = new AbortController();
+  item.uploading = true;
+  item.error = '';
+  renderPendingAttachments();
+  const form = new FormData();
+  form.append('file', item.file);
+  try {
+    const result = await api('/api/chat/files', { method: 'POST', body: form, signal: item.controller.signal });
+    if (state.pendingAttachments.includes(item)) item.metadata = result;
+  } catch (e) {
+    if (state.pendingAttachments.includes(item) && e.name !== 'AbortError') item.error = e.message || '请重试';
+  } finally {
+    item.uploading = false;
+    if (state.pendingAttachments.includes(item)) renderPendingAttachments();
+  }
+}
+
+async function attachmentBlob(file, token, controller) {
+  const url = new URL(file.url, location.href);
+  if (url.origin !== location.origin || !/^https?:$/.test(url.protocol)) throw new Error('附件地址无效');
+  const response = await fetch(url.href, { headers: { Authorization: 'Bearer ' + token }, signal: controller.signal });
+  if (!response.ok) throw new Error('附件获取失败（' + response.status + '）');
+  return response.blob();
+}
+
+function addAttachments(el, files) {
+  if (!Array.isArray(files) || !files.length) return;
+  let list = el.querySelector('.attachment-list');
+  if (!list) {
+    list = document.createElement('div');
+    list.className = 'attachment-list';
+    el.appendChild(list);
+  }
+  files.forEach(file => {
+    if (!file || !file.id || !file.url || Array.from(list.children).some(card => card.dataset.attachmentId === String(file.id))) return;
+    const card = document.createElement('div');
+    card.className = 'attachment';
+    card.dataset.attachmentId = file.id;
+    const link = document.createElement('a');
+    link.href = '#';
+    link.textContent = (file.name || '附件') + ' · 下载';
+    const status = document.createElement('span');
+    const token = state.token;
+    link.onclick = async event => {
+      event.preventDefault();
+      if (state.token !== token) return;
+      const controller = new AbortController();
+      state.attachmentFetches.add(controller);
+      try {
+        status.textContent = ' 获取中…';
+        const blob = await attachmentBlob(file, token, controller);
+        if (state.token !== token || !card.isConnected) return;
+        const url = URL.createObjectURL(blob);
+        const download = document.createElement('a');
+        download.href = url; download.download = file.name || '附件';
+        document.body.appendChild(download); download.click(); download.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+        status.textContent = '';
+      } catch (e) { if (e.name !== 'AbortError') status.textContent = ' ' + e.message; }
+      finally { state.attachmentFetches.delete(controller); }
+    };
+    card.append(link, status);
+    list.appendChild(card);
+    if ((file.content_type || '').startsWith('image/')) {
+      const controller = new AbortController();
+      state.attachmentFetches.add(controller);
+      attachmentBlob(file, token, controller).then(blob => {
+        if (state.token !== token || !card.isConnected) return;
+        const url = URL.createObjectURL(blob);
+        state.attachmentURLs.add(url);
+        const img = document.createElement('img');
+        img.src = url; img.alt = file.name || '图片';
+        card.prepend(img);
+      }).catch(e => { if (e.name !== 'AbortError') status.textContent = ' 图片加载失败'; })
+        .finally(() => state.attachmentFetches.delete(controller));
+    }
+  });
+}
+
 function resetChat() {
+  clearAttachmentResources();
   const chat = $('chat');
   chat.innerHTML = '';
   const empty = document.createElement('div');
@@ -1003,6 +1174,19 @@ function resetChat() {
 }
 
 function resetUserUI() {
+  if (state.activeTurn) state.activeTurn.controller.abort();
+  state.activeTurn = null;
+  state.busy = false;
+  state.runnerStart = null;
+  state.runnerBusy = false;
+  state.runnerRunning = false;
+  state.lastInteraction = 0;
+  show('settingsModal', false);
+  $('sendBtn').disabled = false;
+  show('cancelChatBtn', false);
+  $('cancelChatBtn').disabled = false;
+  $('cancelChatBtn').textContent = '停止生成';
+  $('newChatBtn').disabled = false;
   stopQrPolling();
   show('qrModal', false);
   show('takeoverModal', false);
@@ -1036,7 +1220,7 @@ function setAuthMode(mode) {
   $('submitAuthBtn').textContent = register ? '创建账号' : '登录';
   $('authTitle').textContent = register ? '创建账号' : '登录';
   $('authHint').textContent = register
-    ? '第一次使用？注册后即可创建你的独立投递环境。'
+    ? '第一次使用？注册后即可开始使用投递台账。'
     : '使用已有账号登录，继续你的投递台账。';
   $('password').setAttribute('autocomplete', register ? 'new-password' : 'current-password');
   setError('authError', '');
@@ -1097,12 +1281,14 @@ async function loadMe() {
       if (latest.sessionId) saveSession(latest.sessionId);
     } catch (e) { /* ignore */ }
   }
-  await loadRunner();
-  await Promise.all([
-    loadChannels(),
-    loadSites(),
-    state.runnerRunning ? loadStats() : Promise.resolve(),
-  ]);
+  $('channels').textContent = '正在准备…';
+  loadSites();
+  const token = state.token;
+  ensureRunner().then(() => {
+    if (state.token === token) return Promise.all([loadChannels(), loadStats()]);
+  }).catch(e => {
+    if (state.token === token) $('channels').textContent = '准备失败：' + e.message + '，可点击登录按钮重试。';
+  });
   await loadHistory();
   startEventStream();
 }
@@ -1116,9 +1302,10 @@ async function loadHistory() {
     $('empty')?.remove();
     items.forEach(item => {
       if (item.role === 'user') {
-        addMessage('user', item.content || '');
+        addAttachments(addMessage('user', item.content || ''), item.attachments);
       } else if (item.role === 'assistant') {
         const el = addMessage('agent', '');
+        addAttachments(el, item.attachments);
         renderMarkdown(el.querySelector('.body'), item.content || '');
       }
     });
@@ -1134,10 +1321,55 @@ async function loadHistory() {
   } catch (e) { /* ignore */ }
 }
 
+function showReminder(notification) {
+  if (!notification || !Number.isInteger(notification.id)) return;
+  const fields = notification.fields || {};
+  const label = fields.title || fields.name || (notification.kind === 'event' ? '求职事件' : '求职任务');
+  const date = new Date(notification.due_at);
+  const time = Number.isNaN(date.getTime()) ? notification.due_at : date.toLocaleString();
+  let el = state.shownReminders.get(notification.id);
+  const text = notification.kind === 'scheduled_job' ? `${label}（${time}）` : `提醒：${label}（${time}）`;
+  if (el && el.isConnected) {
+    el.querySelector('.body').textContent = text;
+    el.querySelector('.reminder-ack')?.remove();
+  } else {
+    el = addMessage('agent', text);
+    state.shownReminders.set(notification.id, el);
+  }
+  const ack = document.createElement('button');
+  ack.type = 'button';
+  ack.className = 'linkish reminder-ack';
+  ack.textContent = '标记已读';
+  ack.onclick = async () => {
+    ack.disabled = true;
+    try {
+      await api(`/api/agent/reminders/notifications/${notification.id}/read`, {method: 'POST'});
+      ack.remove();
+    } catch (e) { ack.disabled = false; ack.textContent = '标记失败，点击重试'; }
+  };
+  el.appendChild(ack);
+  if (state.view !== 'chat') $('chatBadge').classList.remove('hidden');
+}
+
+async function loadUnreadReminders() {
+  const token = state.token;
+  try {
+    const data = await api('/api/agent/reminders/notifications?unread_only=true&limit=100');
+    if (token !== state.token) return;
+    (data.notifications || []).slice().reverse().forEach(showReminder);
+  } catch (e) { /* retry when the event stream reconnects */ }
+}
+
 function handleAgentEvent(ev) {
   if (!ev) return;
+  if (ev.type === 'overflow') {
+    addMessage('agent', '实时消息过多，部分通知可能延迟或遗漏。请刷新页面查看最新状态。');
+    loadUnreadReminders();
+    loadRunner();
+    return;
+  }
+  if (ev.type === 'reminder') { showReminder(ev.notification); return; }
   if (ev.type === 'runner_idle') {
-    addMessage('system', ev.message || '运行环境已空闲自动关闭，下次发消息会自动重启。');
     loadRunner();
     return;
   }
@@ -1161,6 +1393,7 @@ async function startEventStream() {
       signal: state.eventAbort.signal,
     });
     if (!res.ok) throw new Error('events ' + res.status);
+    await loadUnreadReminders();
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -1186,30 +1419,27 @@ async function startEventStream() {
 function setRunnerState(running, port) {
   state.runnerRunning = running;
   $('runnerDot').classList.toggle('on', running);
-  $('runnerDot').classList.toggle('busy', state.busy);
+  $('runnerDot').classList.toggle('busy', state.runnerBusy);
   $('runnerText').textContent = running ? '运行中' : '未启动';
   $('runnerPort').textContent = running && port ? ':' + port : '';
-  $('startRunner').disabled = running || state.busy;
-  $('stopRunner').disabled = !running || state.busy;
+  $('startRunner').disabled = running || state.runnerBusy || state.busy;
+  $('stopRunner').disabled = !running || state.runnerBusy || state.busy;
   if (!running) {
     $('statsTotal').textContent = '—';
     $('statsDelivered').textContent = '—';
     $('statsFiltered').textContent = '—';
-    if (state.view === 'dash') {
-      show('dashEmpty', true);
-      show('dashBody', false);
-    }
   }
 }
 
 async function loadRunner() {
   try {
-    const wasRunning = state.runnerRunning;
+    const token = state.token;
     const data = await api('/api/me/runner');
+    if (!token || state.token !== token) return;
     setRunnerState(!!data.running, data.port);
     if (!state.runnerRunning) setBossLoggedIn(false);
-    if (state.view === 'dash' && !wasRunning && state.runnerRunning) loadDashboard();
-  } catch (e) { /* ignore */ }
+    return data;
+  } catch (e) { $('runnerHint').textContent = e.message; }
 }
 
 function setBossLoggedIn(loggedIn) {
@@ -1269,9 +1499,16 @@ function switchView(view) {
 }
 
 async function loadDashboard() {
-  if (!state.runnerRunning) {
-    show('dashEmpty', true);
-    show('dashBody', false);
+  show('dashEmpty', true);
+  show('dashBody', false);
+  $('dashEmptyTitle').textContent = '正在准备看板…';
+  $('dashEmptyHint').textContent = '请稍候。';
+  show('dashStart', false);
+  try { await ensureRunner(); }
+  catch (e) {
+    $('dashEmptyTitle').textContent = '看板暂时无法加载';
+    $('dashEmptyHint').textContent = e.message;
+    show('dashStart', true);
     return;
   }
   show('dashEmpty', false);
@@ -1430,7 +1667,7 @@ const CHANNEL_STATE_TEXT = {
   pending_scan: ['待扫码', 'warn'],
   qr_expired: ['二维码过期', 'warn'],
   not_checked: ['未检测', 'idle'],
-  runner_stopped: ['环境未启动', 'idle'],
+  runner_stopped: ['待连接', 'idle'],
   unknown: ['检测失败', 'idle'],
 };
 
@@ -1439,6 +1676,7 @@ async function checkChannel(key, silent) {
   const stateEl = row ? row.querySelector('.chan-state') : null;
   if (stateEl) stateEl.textContent = '检测中…';
   try {
+    await ensureRunner();
     const res = await api('/api/channels/' + key + '/check', { method: 'POST' });
     await loadChannels();
     if (silent) return;
@@ -1520,28 +1758,49 @@ async function loadStats() {
   }
 }
 
+async function ensureRunner() {
+  const token = state.token;
+  if (!token) throw new Error('请先登录');
+  if (state.runnerStart && state.runnerStart.token === token) return state.runnerStart.promise;
+  const request = { token };
+  state.runnerStart = request;
+  request.promise = (async () => {
+    state.runnerBusy = true;
+    $('runnerHint').textContent = '正在启动，首次约需 5–10 秒';
+    setRunnerState(state.runnerRunning, null);
+    try {
+      let data = await api('/api/me/runner');
+      if (state.token !== token) throw new Error('登录已切换');
+      if (!data.running) data = await api('/api/me/runner/start', { method: 'POST' });
+      if (state.token !== token) throw new Error('登录已切换');
+      setRunnerState(!!data.running, data.port);
+      if (!data.running) throw new Error('准备未完成，请重试');
+      $('runnerHint').textContent = '';
+    } catch (e) {
+      if (state.token === token) $('runnerHint').textContent = e.message;
+      throw new Error(String(e.message || e).replace(/运行环境|runner/gi, '服务'));
+    } finally {
+      if (state.runnerStart === request) {
+        state.runnerStart = null;
+        state.runnerBusy = false;
+        setRunnerState(state.runnerRunning, null);
+      }
+    }
+  })();
+  return request.promise;
+}
+
 async function startRunner() {
-  state.busy = true;
-  $('startRunner').disabled = true;
-  $('runnerHint').textContent = '正在启动，首次约需 5–10 秒';
-  setRunnerState(false, null);
-  try {
-    await api('/api/me/runner/start', { method: 'POST' });
-    $('runnerHint').textContent = '';
-  } catch (e) {
-    $('runnerHint').textContent = e.message;
-  }
-  state.busy = false;
-  $('startRunner').textContent = '启动';
-  loadRunner().then(() => { if (state.runnerRunning) loadStats(); });
+  try { await ensureRunner(); await Promise.all([loadChannels(), loadStats()]); }
+  catch (e) { /* shown in settings */ }
 }
 
 async function stopRunner() {
-  state.busy = true;
-  try { await api('/api/me/runner/stop', { method: 'POST' }); }
+  state.runnerBusy = true;
+  setRunnerState(state.runnerRunning, null);
+  try { await api('/api/me/runner/stop', { method: 'POST' }); $('runnerHint').textContent = ''; }
   catch (e) { $('runnerHint').textContent = e.message; }
-  state.busy = false;
-  loadRunner();
+  finally { state.runnerBusy = false; await loadRunner(); }
 }
 
 const SITE_STATE_TEXT = {
@@ -1594,11 +1853,9 @@ async function loadSites() {
 }
 
 async function checkSite(site) {
-  if (!state.runnerRunning) {
-    addMessage('system', '请先启动运行环境，再检测站点。');
-    return;
-  }
-  addMessage('system', '正在打开并检测：' + (site.name || site.url));
+  addMessage('system', '正在准备并检测：' + (site.name || site.url));
+  try { await ensureRunner(); }
+  catch (e) { addMessage('system', '检测准备失败：' + e.message); return; }
   try {
     const res = await api('/api/sites/' + site.id + '/check', { method: 'POST' });
     await loadSites();
@@ -1680,16 +1937,70 @@ function renderMarkdown(body, text) {
   }
 }
 
+const pendingChatCancels = new Set();
+
+async function cancelChatTurn(turn) {
+  if (state.activeTurn !== turn || turn.cancelPending || turn.ended) return;
+  turn.cancelRequested = true;
+  $('cancelChatBtn').disabled = true;
+  $('cancelChatBtn').textContent = '正在停止，等待当前操作结束…';
+  if (!turn.ready || !turn.sessionId) return;
+  turn.cancelPending = true;
+  const cancelKey = JSON.stringify([turn.userId, turn.sessionId]);
+  pendingChatCancels.add(cancelKey);
+  try {
+    const res = await fetch('/api/agent/chat/cancel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + turn.token },
+      body: JSON.stringify({ session_id: turn.sessionId }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || data.message || ('请求失败 ' + res.status));
+    if (state.activeTurn !== turn || turn.ended) return;
+    if (!data.canceled) {
+      turn.cancelRequested = false;
+      $('cancelChatBtn').disabled = false;
+      $('cancelChatBtn').textContent = '停止生成';
+      addMessage('system', '未找到正在运行的代理任务，正在等待当前回复结束。');
+    }
+  } catch (e) {
+    if (state.activeTurn !== turn || turn.ended) return;
+    turn.cancelRequested = false;
+    $('cancelChatBtn').disabled = false;
+    $('cancelChatBtn').textContent = '停止生成';
+    addMessage('system', '停止请求失败：' + e.message + '。代理可能仍在运行，请重试。');
+  } finally {
+    pendingChatCancels.delete(cancelKey);
+    turn.cancelPending = false;
+  }
+}
+
 async function sendMessage() {
   const input = $('input');
   const text = input.value.trim();
-  if (!text || state.busy) return;
+  if ((!text && !state.pendingAttachments.length) || state.busy) return;
+  if (state.pendingAttachments.some(item => item.uploading || !item.metadata)) {
+    addMessage('system', '请等待附件上传完成，或重试、移除上传失败的附件。');
+    return;
+  }
+  if (state.sessionId && pendingChatCancels.has(JSON.stringify([state.user?.id, state.sessionId]))) {
+    addMessage('system', '上一条停止请求尚未结束，请稍后再发送。');
+    return;
+  }
+  const attachments = state.pendingAttachments.map(item => item.metadata);
+  state.pendingAttachments.slice().forEach(removePendingAttachment);
   input.value = '';
   input.style.height = 'auto';
-  addMessage('user', text);
+  addAttachments(addMessage('user', text), attachments);
 
   state.busy = true;
+  const turn = { token: state.token, userId: state.user?.id, sessionId: state.sessionId, controller: new AbortController(), ready: false, cancelRequested: false, cancelPending: false, cancelPromise: null, ended: false };
+  state.activeTurn = turn;
   $('sendBtn').disabled = true;
+  $('newChatBtn').disabled = true;
+  $('cancelChatBtn').disabled = false;
+  $('cancelChatBtn').textContent = '停止生成';
+  show('cancelChatBtn', true);
 
   const el = addMessage('agent', '', null);
   el.classList.add('streaming');
@@ -1706,7 +2017,7 @@ async function sendMessage() {
   const scheduleRender = () => {
     if (scheduled) return;
     scheduled = true;
-    setTimeout(() => { scheduled = false; render(); }, 80);
+    setTimeout(() => { scheduled = false; if (!turn.ended && state.activeTurn === turn) render(); }, 80);
   };
 
   try {
@@ -1715,9 +2026,10 @@ async function sendMessage() {
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'text/event-stream',
-        'Authorization': 'Bearer ' + state.token,
+        'Authorization': 'Bearer ' + turn.token,
       },
-      body: JSON.stringify({ message: text, session_id: state.sessionId || null }),
+      body: JSON.stringify({ message: text, session_id: turn.sessionId || null, attachment_ids: attachments.map(file => file.id) }),
+      signal: turn.controller.signal,
     });
 
     if (!res.ok) {
@@ -1736,19 +2048,26 @@ async function sendMessage() {
     let finished = false;
 
     const handle = (payload) => {
+      if (state.activeTurn !== turn || turn.ended) return;
       let ev;
       try { ev = JSON.parse(payload); } catch { return; }
       if (ev.type === 'session') {
         saveSession(ev.sessionId);
+        turn.sessionId = ev.sessionId;
+        turn.ready = true;
+        if (turn.cancelRequested) turn.cancelPromise = cancelChatTurn(turn);
       } else if (ev.type === 'text') {
         full += ev.text || '';
         scheduleRender();
       } else if (ev.type === 'notice') {
-        body.textContent = ev.message || '准备中…';
+        const notice = (ev.message || '准备中…').replace(/运行环境|runner/gi, '服务');
+        if (ev.persistent) addMessage('system', notice);
+        else body.textContent = notice;
       } else if (ev.type === 'tool_start') {
         addToolChip(el, ev.name, null);
       } else if (ev.type === 'tool_result') {
         updateToolChip(el, ev.name, !!ev.ok);
+        addAttachments(el, ev.attachments);
       } else if (ev.type === 'qr') {
         showQr(ev.url);
       } else if (ev.type === 'takeover') {
@@ -1762,8 +2081,15 @@ async function sendMessage() {
           showTakeoverCard('该网站需要登录或人机验证，请在接管浏览器中完成，然后点“我已登录，继续”。', '');
         }
         finished = true;
+      } else if (ev.type === 'canceled') {
+        full = ev.reply || full;
+        render();
+        if (ev.sessionId) saveSession(ev.sessionId);
+        if (!full) body.textContent = '（无回复）';
+        addMessage('system', '代理生成已停止。已派发的投递等操作不会因此撤销或停止。');
+        finished = true;
       } else if (ev.type === 'error') {
-        throw new Error(ev.message || '模型返回错误');
+        throw new Error((ev.message || '模型返回错误').replace(/运行环境|runner/gi, '服务'));
       }
     };
 
@@ -1781,15 +2107,27 @@ async function sendMessage() {
       }
     }
 
-    if (!full) body.textContent = '（无回复）';
-    if (state.runnerRunning) loadStats();
+    if (!finished) throw new Error('连接已断开，无法确认代理是否结束');
+    if (!full && body.textContent !== '（无回复）') body.textContent = '（无回复）';
+    if (state.activeTurn === turn && state.runnerRunning) loadStats();
   } catch (e) {
-    body.textContent = '出错了：' + e.message;
-    body.classList.remove('md');
+    if (state.activeTurn === turn) {
+      if (full) render();
+      else { body.textContent = '出错了：' + e.message; body.classList.remove('md'); }
+      if (full) addMessage('system', '出错了：' + e.message);
+    }
   } finally {
+    turn.ended = true;
     el.classList.remove('streaming');
+    if (turn.cancelPromise) await turn.cancelPromise;
+    if (state.activeTurn !== turn) return;
+    state.activeTurn = null;
     state.busy = false;
     $('sendBtn').disabled = false;
+    $('newChatBtn').disabled = false;
+    show('cancelChatBtn', false);
+    $('cancelChatBtn').disabled = false;
+    $('cancelChatBtn').textContent = '停止生成';
     loadRunner().then(() => {
       if (state.runnerRunning) {
         loadChannels();
@@ -1854,6 +2192,7 @@ function showTakeoverCard(reason, url) {
 async function openTakeover() {
   clearTakeoverNeeded();
   try {
+    await ensureRunner();
     const data = await api('/api/browser/takeover', { method: 'POST' });
     $('takeoverFrame').src = data.viewPath;
     show('takeoverModal', true);
@@ -1869,6 +2208,9 @@ function closeTakeover() {
 
 async function openQr() {
   try {
+    $('loginBoss').disabled = true;
+    $('loginBoss').textContent = '正在准备登录…';
+    await ensureRunner();
     const data = await api('/api/channels/boss/login', { method: 'POST' });
     if (data && data.loggedIn) {
       setBossLoggedIn(true);
@@ -1878,6 +2220,7 @@ async function openQr() {
     }
     await showQr('/api/channels/boss/login/qr');
   } catch (e) { addMessage('system', '打开登录页失败：' + e.message); }
+  finally { $('loginBoss').disabled = false; setBossLoggedIn(state.bossLoggedIn); }
 }
 
 async function showQr(url) {
@@ -1901,14 +2244,15 @@ function hint(id, text) {
 
 async function openProfile() {
   show('profileModal', true);
-  hint('aiHint', '');
-  hint('behaviorHint', '');
   hint('resumeHint', '');
+  hint('aiHint', '正在加载…');
+  hint('behaviorHint', '正在加载…');
   hint('pfHint', '');
   await loadProfileData();
-  if (!state.runnerRunning) {
-    hint('aiHint', '启动运行环境后可读取 AI 配置');
-    hint('behaviorHint', '启动运行环境后可读取打招呼设置');
+  try { await ensureRunner(); }
+  catch (e) {
+    hint('aiHint', '加载失败：' + e.message);
+    hint('behaviorHint', '加载失败：' + e.message);
     return;
   }
   await Promise.all([loadAiProfile(), loadBehavior(), loadResumeInfo(), loadBlacklist()]);
@@ -2010,8 +2354,9 @@ async function loadResumeFileInfo() {
 
 async function generateResume() {
   if (!(await saveProfileData(true))) return;
-  hint('pfHint', '正在生成简历并同步到投递环境…');
+  hint('pfHint', '正在生成并同步简历…');
   try {
+    await ensureRunner();
     await api('/api/resume/generate', { method: 'POST' });
     hint('pfHint', '已生成 PDF 并同步为图片简历');
     await loadResumeFileInfo();
@@ -2027,12 +2372,14 @@ async function loadAiProfile() {
     const ai = (data && data.data) || {};
     $('aiIntroduce').value = ai.introduce || '';
     $('aiPrompt').value = ai.prompt || '';
+    hint('aiHint', '');
   } catch (e) { hint('aiHint', e.message); }
 }
 
 async function saveAiProfile() {
   hint('aiHint', '保存中…');
   try {
+    await ensureRunner();
     await api('/api/ai/config', {
       method: 'POST',
       body: JSON.stringify({
@@ -2051,12 +2398,14 @@ async function loadBehavior() {
     $('sayHi').value = cfg.sayHi || '';
     $('enableAi').checked = Number(cfg.enableAi) === 1;
     $('sendImgResume').checked = Number(cfg.sendImgResume) === 1;
+    hint('behaviorHint', '');
   } catch (e) { hint('behaviorHint', e.message); }
 }
 
 async function saveBehavior() {
   hint('behaviorHint', '保存中…');
   try {
+    await ensureRunner();
     await api('/api/channels/boss/config', {
       method: 'PUT',
       body: JSON.stringify({
@@ -2103,6 +2452,7 @@ async function uploadResume(file) {
   const form = new FormData();
   form.append('file', file);
   try {
+    await ensureRunner();
     await api('/api/channels/boss/resume-image', { method: 'POST', body: form });
     hint('resumeHint', '已上传');
     $('resumeFile').value = '';
@@ -2128,10 +2478,13 @@ async function loadBlacklist() {
       btn.textContent = '×';
       btn.title = '移除';
       btn.onclick = async () => {
+        hint('blacklistHint', '正在移除…');
         try {
+          await ensureRunner();
           await api('/api/channels/boss/blacklist/' + item.id, { method: 'DELETE' });
-          loadBlacklist();
-        } catch (e) { /* ignore */ }
+          await loadBlacklist();
+          hint('blacklistHint', '已移除');
+        } catch (e) { hint('blacklistHint', e.message); }
       };
       tag.appendChild(btn);
       $('blacklist').appendChild(tag);
@@ -2145,15 +2498,18 @@ async function addBlacklist() {
   const input = $('blacklistInput');
   const value = input.value.trim();
   if (!value) return;
+  hint('blacklistHint', '正在添加…');
   try {
+    await ensureRunner();
     await api('/api/channels/boss/blacklist', {
       method: 'POST',
       body: JSON.stringify({ type: 'company', value }),
     });
     input.value = '';
     loadBlacklist();
+    hint('blacklistHint', '已添加');
   } catch (e) {
-    $('blacklist').innerHTML = `<span class="mini-hint">${e.message}</span>`;
+    hint('blacklistHint', e.message);
   }
 }
 
@@ -2179,9 +2535,11 @@ function bind() {
       state.token = data.token;
       localStorage.setItem('getjobs_token', data.token);
       resetUserUI();
+      state.lastInteraction = document.hidden ? 0 : lastAuthInteraction;
+      lastAuthInteraction = 0;
       show('auth', false);
       show('app', true);
-      loadMe();
+      loadMe().catch(e => { if (state.token === data.token) { logout(); setError('authError', e.message); } });
     } catch (e) { setError('authError', e.message); }
   };
 
@@ -2191,9 +2549,11 @@ function bind() {
   $('password').addEventListener('keydown', e => { if (e.key === 'Enter') submitAuth(); });
   $('password2').addEventListener('keydown', e => { if (e.key === 'Enter') submitAuth(); });
   $('logoutBtn').onclick = logout;
+  $('settingsBtn').onclick = () => { show('settingsModal', true); loadRunner(); };
+  $('closeSettings').onclick = () => show('settingsModal', false);
   $('tabChat').onclick = () => switchView('chat');
   $('tabDash').onclick = () => switchView('dash');
-  $('dashStart').onclick = () => startRunner();
+  $('dashStart').onclick = () => loadDashboard();
   $('refreshDash').onclick = () => loadDashboard();
   $('statusFilter').onchange = (e) => {
     state.dashStatus = e.target.value;
@@ -2252,7 +2612,25 @@ function bind() {
   $('addBlacklist').onclick = addBlacklist;
   $('closeQr').onclick = () => { stopQrPolling(); show('qrModal', false); };
   $('refreshQr').onclick = () => openQr();
+  $('attachBtn').onclick = () => $('chatFiles').click();
+  $('chatFiles').onchange = event => {
+    for (const file of event.target.files) {
+      const item = { file, metadata: null, uploading: false, error: '', preview: '' };
+      if (file.type.startsWith('image/')) {
+        item.preview = URL.createObjectURL(file);
+        state.attachmentURLs.add(item.preview);
+      }
+      state.pendingAttachments.push(item);
+      uploadChatAttachment(item);
+    }
+    event.target.value = '';
+  };
+  window.addEventListener('pagehide', clearAttachmentResources);
 
+  $('cancelChatBtn').onclick = () => {
+    const turn = state.activeTurn;
+    if (turn) turn.cancelPromise = cancelChatTurn(turn);
+  };
   $('composer').addEventListener('submit', e => { e.preventDefault(); sendMessage(); });
   $('input').addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendMessage(); }
@@ -2272,8 +2650,25 @@ if (state.token) {
   show('app', true);
   loadMe().catch(() => logout());
 }
+document.addEventListener('visibilitychange', () => { if (document.hidden) { state.lastInteraction = 0; lastAuthInteraction = 0; } });
+for (const type of ['pointerdown', 'keydown', 'wheel', 'touchstart']) {
+  document.addEventListener(type, event => {
+    if (!event.isTrusted || document.hidden) return;
+    if (state.token) state.lastInteraction = Date.now();
+    else lastAuthInteraction = Date.now();
+  }, { passive: true });
+}
 setInterval(() => {
-  if (!state.token || state.busy) return;
+  if (!state.token || !state.user || document.hidden || !state.lastInteraction || Date.now() - state.lastInteraction > 120000 || state.heartbeatAbort) return;
+  const token = state.token;
+  const controller = new AbortController();
+  state.heartbeatAbort = controller;
+  fetch('/api/me/heartbeat', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token }, signal: controller.signal })
+    .catch(() => {})
+    .finally(() => { if (state.heartbeatAbort === controller) state.heartbeatAbort = null; });
+}, 30000);
+setInterval(() => {
+  if (!state.token || state.busy || state.runnerBusy) return;
   loadRunner();
   if (state.runnerRunning) loadChannels();
 }, 5000);

@@ -1,4 +1,4 @@
-"""Background watcher: enforce per-run delivery limits and push proactive messages."""
+"""Background watcher for task status and proactive messages."""
 
 import threading
 import time
@@ -109,8 +109,41 @@ def _push(user_id: int, session_id: str, message: str) -> None:
         },
     )
 
+def _watch_boss(user_id: int, session_id: str) -> None:
+    started = time.time()
+    while time.time() - started < MAX_WATCH_SECONDS:
+        time.sleep(POLL_SECONDS)
+        try:
+            status = _get_json(user_id, "/api/boss/status")
+            if not isinstance(status.get("isRunning"), bool):
+                continue
+        except Exception:
+            continue
+        if status["isRunning"]:
+            continue
+        outcome = status.get("outcome")
+        label = {"completed": "已结束", "stopped": "已停止", "failed": "执行失败"}.get(outcome, "状态未知")
+        count = status.get("attemptedCount")
+        limit = status.get("maxCount")
+        detail = f"本轮占用沟通名额：{count}" if isinstance(count, int) else "本轮沟通名额未知"
+        if isinstance(limit, int):
+            detail += f" / {limit}"
+        _push(user_id, session_id, f"【Boss直聘】任务{label}。{detail}；名额不代表投递成功或消息已送达。")
+        return
+
+    try:
+        response = runners.request(user_id, "POST", "/api/boss/stop", timeout=15)
+        requested = response.status_code < 400 and bool((response.json() or {}).get("success"))
+    except Exception:
+        requested = False
+    message = "已请求停止，实际停止状态待确认" if requested else "停止请求未确认，请查询任务状态"
+    _push(user_id, session_id, f"【Boss直聘】监控超时（2 小时）；{message}。")
+
 
 def _watch_inner(user_id: int, channel: str, session_id: str, baseline: int | None, target: int | None) -> None:
+    if channel == "boss":
+        _watch_boss(user_id, session_id)
+        return
     entry = CHANNELS.get(channel)
     if not entry:
         return

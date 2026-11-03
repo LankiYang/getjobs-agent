@@ -1,8 +1,10 @@
 """Track per-user activity and reclaim idle runner processes."""
 
 import os
+import logging
 import threading
 import time
+import weakref
 
 DEFAULT_IDLE_MINUTES = 15
 
@@ -24,6 +26,31 @@ _lock = threading.Lock()
 _last: dict[int, float] = {}
 _busy: dict[int, int] = {}
 _vnc: dict[int, int] = {}
+_guards: weakref.WeakValueDictionary[int, threading.RLock] = weakref.WeakValueDictionary()
+
+
+def guard(user_id: int):
+    with _lock:
+        lock = _guards.get(user_id)
+        if lock is None:
+            lock = threading.RLock()
+            _guards[user_id] = lock
+        return lock
+
+
+def is_idle(user_id: int) -> bool:
+    with _lock:
+        last = _last.get(user_id)
+        return (last is not None and time.time() - last >= IDLE_SECONDS
+                and not _busy.get(user_id, 0) and not _vnc.get(user_id, 0))
+
+
+def forget_if_idle(user_id: int) -> None:
+    with _lock:
+        last = _last.get(user_id)
+        if (last is not None and time.time() - last >= IDLE_SECONDS
+                and not _busy.get(user_id, 0) and not _vnc.get(user_id, 0)):
+            _last.pop(user_id, None)
 
 
 def touch(user_id: int) -> None:
@@ -65,16 +92,13 @@ def vnc_close(user_id: int) -> None:
 
 def _claim_idle(now: float) -> list[int]:
     with _lock:
-        claimed = [
+        return [
             user_id
             for user_id, last in list(_last.items())
             if now - last >= IDLE_SECONDS
             and _busy.get(user_id, 0) == 0
             and _vnc.get(user_id, 0) == 0
         ]
-        for user_id in claimed:
-            _last.pop(user_id, None)
-        return claimed
 
 
 def start_reaper(stop_runner, interval_seconds: int = 60) -> None:
@@ -86,8 +110,9 @@ def start_reaper(stop_runner, interval_seconds: int = 60) -> None:
             time.sleep(interval_seconds)
             for user_id in _claim_idle(time.time()):
                 try:
-                    stop_runner(user_id)
+                    if stop_runner(user_id):
+                        forget_if_idle(user_id)
                 except Exception:
-                    pass
+                    logging.exception("Idle runner reclamation failed for user %s", user_id)
 
     threading.Thread(target=loop, daemon=True, name="runner-idle-reaper").start()

@@ -4,7 +4,10 @@ import asyncio
 import datetime as dt
 import json
 import queue
+import os
 import threading
+import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
@@ -25,12 +28,12 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import activity, agent, resume, resume_service, runners
+from . import activity, agent, chat_files, reminders, resume, resume_service, runners, scheduled_jobs
 from . import sites as site_service
 from .channels import CHANNELS
 from .config import ALLOWED_ORIGINS
 from .db import get_conn, init_db
-from .events import hub
+from .events import EventCapacityError, hub
 from .security import (
     create_ticket,
     create_token,
@@ -49,32 +52,29 @@ app.add_middleware(
 )
 
 
-def _stop_idle_runner(user_id: int) -> None:
-    try:
-        runners.stop(user_id)
-    except Exception:
-        activity.touch(user_id)
-        return
-    hub.publish(
-        user_id,
-        {
-            "type": "runner_idle",
-            "message": "运行环境已空闲自动关闭，下次发消息会自动重启。",
-        },
-    )
+def _stop_idle_runner(user_id: int) -> bool:
+    return runners.stop_if_idle(user_id)
 
 
 @app.on_event("startup")
 async def _startup() -> None:
     init_db()
     hub.set_loop(asyncio.get_running_loop())
+    reminders.start()
+    scheduled_jobs.start()
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT user_id FROM runners WHERE status IN ('running', 'starting')"
+            "SELECT user_id FROM runners WHERE pid IS NOT NULL OR status IN ('running', 'starting')"
         ).fetchall()
     for row in rows:
         activity.touch(row["user_id"])
     activity.start_reaper(_stop_idle_runner)
+
+
+@app.on_event("shutdown")
+async def _shutdown_reminders() -> None:
+    scheduled_jobs.stop()
+    reminders.stop()
 
 
 @app.exception_handler(runners.RunnerError)
@@ -153,6 +153,12 @@ def me(user_id: int = Depends(current_user)) -> dict:
     if not row:
         raise HTTPException(401, "user not found")
     return {"user": dict(row), "runner": runners.status(user_id)}
+
+
+@app.post("/api/me/heartbeat")
+def heartbeat(user_id: int = Depends(current_user)) -> dict:
+    activity.touch(user_id)
+    return {"ok": True}
 
 
 @app.post("/api/me/runner/start")
@@ -307,19 +313,26 @@ async def browser_takeover_ws(websocket: WebSocket):
     if user_id is None:
         await websocket.close(code=4401)
         return
+    activity.vnc_open(user_id)
     port = runners.vnc_port_for_user(user_id)
     if port is None:
+        activity.vnc_close(user_id)
         await websocket.close(code=4404)
         return
 
     try:
         reader, writer = await asyncio.open_connection("127.0.0.1", port)
     except OSError:
+        activity.vnc_close(user_id)
         await websocket.close(code=1011)
         return
 
-    await websocket.accept(subprotocol="binary")
-    activity.vnc_open(user_id)
+    try:
+        await websocket.accept(subprotocol="binary")
+    except Exception:
+        writer.close()
+        activity.vnc_close(user_id)
+        raise
 
     async def ws_to_tcp():
         try:
@@ -472,6 +485,21 @@ async def save_ai_config(request: Request, user_id: int = Depends(current_user))
     payload = await request.json()
     return _json(runners.request(user_id, "POST", "/api/ai/config", json=payload))
 
+@asynccontextmanager
+async def _upload_slot(file):
+    acquired = _upload_capacity.acquire(blocking=False)
+    try:
+        if not acquired:
+            raise HTTPException(503, "上传服务繁忙，请稍后重试")
+        yield
+    finally:
+        try:
+            await file.close()
+        finally:
+            if acquired:
+                _upload_capacity.release()
+
+
 
 @app.post("/api/channels/{channel}/resume-image")
 async def upload_resume_image(
@@ -479,9 +507,14 @@ async def upload_resume_image(
     file: UploadFile = File(...),
     user_id: int = Depends(current_user),
 ):
+    async with _upload_slot(file):
+        return await _upload_resume_image(channel, file, user_id)
+
+
+async def _upload_resume_image(channel: str, file: UploadFile, user_id: int):
     if channel != "boss":
         raise HTTPException(400, "当前仅 Boss 支持图片简历")
-    content = await file.read()
+    content = await file.read(10 * 1024 * 1024 + 1)
     if len(content) > 10 * 1024 * 1024:
         raise HTTPException(413, "文件大小不能超过 10MB")
 
@@ -639,17 +672,132 @@ def channel_stream(channel: str, user_id: int = Depends(current_user)):
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
+@app.post("/api/chat/files")
+async def upload_chat_file(file: UploadFile = File(...), user_id: int = Depends(current_user)):
+    async with _upload_slot(file):
+        try:
+            data = await file.read(chat_files.MAX_SIZE + 1)
+            if len(data) > chat_files.MAX_SIZE:
+                raise HTTPException(413, "文件大小不能超过 10MB")
+            return chat_files.store(user_id, file.filename or "", file.content_type or "application/octet-stream", data)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+
+@app.get("/api/chat/files/{file_id}")
+def get_chat_file(file_id: str, user_id: int = Depends(current_user)):
+    row = chat_files.get(user_id, file_id)
+    if row is None or not chat_files.path_for(user_id, file_id).is_file():
+        raise HTTPException(404, "附件不存在")
+    return FileResponse(chat_files.path_for(user_id, file_id), media_type=row["content_type"],
+                        filename=row["name"], content_disposition_type="inline" if row["content_type"].startswith("image/") else "attachment",
+                        headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "private, no-store"})
+
+
+def _validate_chat(body, user_id):
+    if len(body.message) > _chat_message_limit:
+        raise HTTPException(413, f"消息长度不能超过 {_chat_message_limit} 个字符")
+    if not body.message.strip() and not body.attachment_ids:
+        raise HTTPException(400, "消息和附件不能同时为空")
+    try:
+        return chat_files.resolve_ids(user_id, body.attachment_ids)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+def _image_warning(files):
+    images = [item for item in files if item["content_type"].startswith("image/")]
+    if images and not agent.VISION_ENABLED:
+        return "当前模型未启用图片识别，图片仅作为附件保存，助手无法查看图片内容。"
+    if len(images) > 4 or any(item["size"] > 5 * 1024 * 1024 for item in images):
+        return "图片识别每次最多读取 4 张且单张不超过 5MB，其余图片仅作为附件保存。"
+    return None
+
+
 class ChatRequest(BaseModel):
-    message: str
+    message: str = ""
+    attachment_ids: list[str] = []
     session_id: str | None = None
+
+
+class CancelChatRequest(BaseModel):
+    session_id: str
+
+
+class _ChatCanceled(Exception):
+    pass
+
+
+class _ChatTurn:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._canceled = False
+        self._finished = False
+
+    def cancel(self):
+        with self._lock:
+            if self._finished:
+                return False
+            self._canceled = True
+            return True
+
+    def cancelled(self):
+        with self._lock:
+            return self._canceled
+
+    def check(self):
+        if self.cancelled():
+            raise _ChatCanceled()
+
+    def finish(self):
+        with self._lock:
+            if self._canceled:
+                raise _ChatCanceled()
+            self._finished = True
+
+
+_chat_turns_lock = threading.Lock()
+_chat_turns: dict[tuple[int, str], _ChatTurn] = {}
+
+def _positive_limit(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.environ.get(name, str(default))))
+    except ValueError:
+        return default
+
+
+_chat_capacity = threading.BoundedSemaphore(_positive_limit("CONTROL_MAX_CONCURRENT_CHATS", 4))
+_chat_queue_size = _positive_limit("CONTROL_CHAT_QUEUE_SIZE", 32)
+_chat_message_limit = _positive_limit("CONTROL_CHAT_MAX_MESSAGE_CHARS", 64000)
+_upload_capacity = threading.BoundedSemaphore(_positive_limit("CONTROL_MAX_CONCURRENT_UPLOADS", 2))
+
+
+def _release_chat_turn(key, turn):
+    with _chat_turns_lock:
+        if _chat_turns.get(key) is turn:
+            del _chat_turns[key]
+
+
+@app.post("/api/agent/chat/cancel")
+def agent_chat_cancel(body: CancelChatRequest, user_id: int = Depends(current_user)) -> dict:
+    with _chat_turns_lock:
+        turn = _chat_turns.get((user_id, body.session_id))
+        canceled = turn.cancel() if turn else False
+    return {"canceled": canceled}
 
 
 @app.post("/api/agent/chat")
 def agent_chat(body: ChatRequest, user_id: int = Depends(current_user)) -> dict:
+    warning = _image_warning(_validate_chat(body, user_id))
+    if not _chat_capacity.acquire(blocking=False):
+        raise HTTPException(503, "对话服务繁忙，请稍后重试")
     activity.begin_busy(user_id)
     try:
         runners.ensure_running(user_id)
-        return agent.run_chat(user_id, body.session_id, body.message)
+        result = agent.run_chat(user_id, body.session_id, body.message, body.attachment_ids)
+        if warning:
+            result["warning"] = warning
+        return result
     except runners.RunnerError as exc:
         raise HTTPException(503, f"运行环境启动失败：{exc.message}") from exc
     except agent.AgentNotConfigured as exc:
@@ -658,62 +806,108 @@ def agent_chat(body: ChatRequest, user_id: int = Depends(current_user)) -> dict:
         raise HTTPException(502, f"模型调用失败: {exc}") from exc
     finally:
         activity.end_busy(user_id)
+        _chat_capacity.release()
 
 
 @app.post("/api/agent/chat/stream")
 async def agent_chat_stream(body: ChatRequest, user_id: int = Depends(current_user)):
-    async def _events_inner():
-        try:
-            current = await asyncio.to_thread(runners.status, user_id)
-            if not current.get("running"):
-                notice = {"type": "notice", "message": "正在启动运行环境…"}
-                yield f"data: {json.dumps(notice, ensure_ascii=False)}\n\n"
-                await asyncio.to_thread(runners.ensure_running, user_id)
-        except runners.RunnerError as exc:
-            payload = {"type": "error", "message": f"运行环境启动失败：{exc.message}"}
-            yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
-            return
+    warning = _image_warning(_validate_chat(body, user_id))
+    session_id = body.session_id or uuid.uuid4().hex
+    key = (user_id, session_id)
+    turn = _ChatTurn()
+    with _chat_turns_lock:
+        if key in _chat_turns:
+            raise HTTPException(409, "该会话已有进行中的对话，请等待其结束")
+        if not _chat_capacity.acquire(blocking=False):
+            raise HTTPException(503, "对话服务繁忙，请稍后重试")
+        _chat_turns[key] = turn
 
-        results: queue.Queue = queue.Queue()
-
-        def worker():
-            try:
-                for event in agent.run_chat_stream(
-                    user_id, body.session_id, body.message
-                ):
-                    results.put(("event", event))
-            except agent.AgentNotConfigured as exc:
-                results.put(("error", str(exc)))
-            except httpx.HTTPError as exc:
-                results.put(("error", f"模型调用失败: {exc}"))
-            except Exception as exc:
-                results.put(("error", str(exc)))
-            finally:
-                results.put(("end", None))
-
-        threading.Thread(target=worker, daemon=True).start()
-
-        while True:
-            try:
-                kind, payload = await asyncio.to_thread(results.get, True, 10)
-            except queue.Empty:
-                yield ": ping\n\n"
-                continue
-            if kind == "error":
-                event = {"type": "error", "message": payload}
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-                break
-            if kind == "end":
-                break
-            yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+    def encode(event):
+        return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
     async def events():
+        started = False
         activity.begin_busy(user_id)
         try:
-            async for item in _events_inner():
-                yield item
+            yield encode({"type": "session", "sessionId": session_id})
+            if warning:
+                yield encode({"type": "notice", "message": warning, "persistent": True})
+            try:
+                turn.check()
+                current = await asyncio.to_thread(runners.status, user_id)
+                turn.check()
+                if not current.get("running"):
+                    yield encode({"type": "notice", "message": "正在启动运行环境…"})
+                    turn.check()
+                    await asyncio.to_thread(runners.ensure_running, user_id)
+                turn.check()
+            except Exception as exc:
+                try:
+                    turn.finish()
+                except _ChatCanceled:
+                    yield encode({"type": "canceled", "sessionId": session_id, "reply": ""})
+                else:
+                    message = f"运行环境启动失败：{exc.message}" if isinstance(exc, runners.RunnerError) else str(exc)
+                    yield encode({"type": "error", "message": message})
+                return
+
+            results: queue.Queue = queue.Queue(maxsize=_chat_queue_size)
+            abandoned = threading.Event()
+
+            def emit(kind, payload):
+                while not abandoned.is_set():
+                    try:
+                        results.put((kind, payload), timeout=0.25)
+                        return
+                    except queue.Full:
+                        continue
+
+            def worker():
+                canceled_event = None
+                try:
+                    for event in agent.run_chat_stream(user_id, session_id, body.message, turn, body.attachment_ids):
+                        if event.get("type") == "canceled":
+                            canceled_event = event
+                        else:
+                            emit("event", event)
+                except Exception as exc:
+                    try:
+                        turn.finish()
+                    except _ChatCanceled:
+                        canceled_event = {"type": "canceled", "sessionId": session_id, "reply": ""}
+                    else:
+                        message = f"模型调用失败: {exc}" if isinstance(exc, httpx.HTTPError) else str(exc)
+                        emit("error", message)
+                finally:
+                    _release_chat_turn(key, turn)
+                    activity.end_busy(user_id)
+                    if canceled_event is not None:
+                        emit("event", canceled_event)
+                    emit("end", None)
+                    _chat_capacity.release()
+
+            threading.Thread(target=worker, daemon=True).start()
+            started = True
+            while True:
+                try:
+                    kind, payload = await asyncio.to_thread(results.get, True, 10)
+                except queue.Empty:
+                    yield ": ping\n\n"
+                    continue
+                if kind == "error":
+                    yield encode({"type": "error", "message": payload})
+                    break
+                if kind == "end":
+                    break
+                yield encode(payload)
         finally:
-            activity.end_busy(user_id)
+            turn.cancel()
+            if started:
+                abandoned.set()
+            if not started:
+                _release_chat_turn(key, turn)
+                activity.end_busy(user_id)
+                _chat_capacity.release()
 
     return StreamingResponse(
         events(),
@@ -737,9 +931,26 @@ def agent_latest_session(user_id: int = Depends(current_user)) -> dict:
     return {"sessionId": row["session_id"] if row else None}
 
 
+@app.get("/api/agent/reminders/notifications")
+def reminder_notifications(unread_only: bool = False, limit: int = 50, offset: int = 0,
+                           user_id: int = Depends(current_user)) -> dict:
+    return reminders.execute(user_id, "notifications", {"unread_only": unread_only, "limit": limit, "offset": offset})
+
+
+@app.post("/api/agent/reminders/notifications/{notification_id}/read")
+def read_reminder(notification_id: int, user_id: int = Depends(current_user)) -> dict:
+    result = reminders.execute(user_id, "mark_read", {"id": notification_id})
+    if not result.get("ok"):
+        raise HTTPException(404, result["error"])
+    return result
+
+
 @app.get("/api/agent/events/stream")
 async def agent_events(user_id: int = Depends(current_user)):
-    queue = hub.subscribe(user_id)
+    try:
+        queue = hub.subscribe(user_id)
+    except EventCapacityError as exc:
+        raise HTTPException(503, str(exc)) from exc
 
     async def events():
         try:
